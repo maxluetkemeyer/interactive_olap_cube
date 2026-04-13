@@ -8,7 +8,13 @@ import React, {
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CellInfo, AxisAssignment, ConceptId } from "./types";
-import { DIMENSIONS, generateCellValue, getDimensionById } from "./data";
+import {
+  DIMENSIONS,
+  generateCellValue,
+  getDimensionById,
+  getDimensionDisplayName,
+  findCurrentLevel,
+} from "./data";
 import { CONCEPTS, getConceptById } from "./concepts";
 import { OPERATIONS, getOperationById } from "./operations";
 import "./OlapCube.css";
@@ -61,13 +67,13 @@ function makeTextSprite(
   const { color = "#333", size = 40, bold = false, scale = 1 } = opts;
   const c = document.createElement("canvas");
   const x = c.getContext("2d")!;
-  const f = `${bold ? "bold " : ""}${size}px "Segoe UI",Arial,sans-serif`;
-  x.font = f;
+  const font = `${bold ? "bold " : ""}${size}px "Segoe UI",Arial,sans-serif`;
+  x.font = font;
   const w = x.measureText(text).width;
   const p = 14;
   c.width = Math.ceil(w) + p * 2;
   c.height = Math.ceil(size * 1.35) + p * 2;
-  x.font = f;
+  x.font = font;
   x.fillStyle = color;
   x.textAlign = "center";
   x.textBaseline = "middle";
@@ -290,6 +296,9 @@ interface CubeMetrics {
   xDimName: string;
   yDimName: string;
   zDimName: string;
+  xDimDisplay: string;
+  yDimDisplay: string;
+  zDimDisplay: string;
   xDimId: string;
   yDimId: string;
   zDimId: string;
@@ -344,14 +353,22 @@ const OlapCube: React.FC = () => {
     null,
   );
   const [tableCollapsed, setTableCollapsed] = useState(false);
-
-  // --- operation state ---
   const [activeOp, setActiveOp] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [stepDone, setStepDone] = useState(false);
-  const [autoPlay, setAutoPlay] = useState(false);
+  const [autoPlay, setAutoPlay] = useState(true);
 
   const anyConcept = activeConcepts.size > 0;
+
+  /* dimension display names for the current axes */
+  const dimDisplayNames = useMemo(
+    () => ({
+      x: getDimensionDisplayName(getDimensionById(axes.x)!),
+      y: getDimensionDisplayName(getDimensionById(axes.y)!),
+      z: getDimensionDisplayName(getDimensionById(axes.z)!),
+    }),
+    [axes],
+  );
 
   /* ================================================================ */
   /*  Cell data                                                        */
@@ -487,16 +504,14 @@ const OlapCube: React.FC = () => {
     const animate = () => {
       ctx.animId = requestAnimationFrame(animate);
       controls.update();
-      // entrance animation
       const elapsed = performance.now() - ctx.buildTime;
       let idx = 0;
       cubeGroup.children.forEach((c) => {
         if (c instanceof THREE.Mesh && c.userData.cellInfo) {
           if (!c.userData.entryDone) {
             const t = Math.min(1, Math.max(0, (elapsed - idx * 25) / 400));
-            const s = 1 - Math.pow(1 - t, 3);
             if (t >= 1) c.userData.entryDone = true;
-            c.scale.setScalar(s);
+            else c.scale.setScalar(1 - Math.pow(1 - t, 3));
           }
           idx++;
         }
@@ -559,6 +574,9 @@ const OlapCube: React.FC = () => {
       xDimName: xd.name,
       yDimName: yd.name,
       zDimName: zd.name,
+      xDimDisplay: getDimensionDisplayName(xd),
+      yDimDisplay: getDimensionDisplayName(yd),
+      zDimDisplay: getDimensionDisplayName(zd),
       xDimId: xd.id,
       yDimId: yd.id,
       zDimId: zd.id,
@@ -641,6 +659,7 @@ const OlapCube: React.FC = () => {
       ctx.meshMap.set(cellKey(cell), mesh);
     });
 
+    /* ---- member labels ---- */
     const lbM = CELL_STRIDE * 0.88;
     xd.members.forEach((m, i) => {
       const s = makeTextSprite(m, {
@@ -673,47 +692,55 @@ const OlapCube: React.FC = () => {
       ctx.labelGroup.add(s);
     });
 
+    /* ---- dimension name labels (with hierarchy level) ---- */
     const nO = CELL_STRIDE * 1.4;
-    [
+    const dimLabelData: {
+      dim: typeof xd;
+      axis: "x" | "y" | "z";
+      pos: THREE.Vector3;
+    }[] = [
       {
-        d: xd,
-        a: "x" as const,
-        p: new THREE.Vector3(
+        dim: xd,
+        axis: "x",
+        pos: new THREE.Vector3(
           ((xN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
           yO - nO,
           zO - lbM,
         ),
       },
       {
-        d: yd,
-        a: "y" as const,
-        p: new THREE.Vector3(
+        dim: yd,
+        axis: "y",
+        pos: new THREE.Vector3(
           xO - nO,
           ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
           zO - lbM,
         ),
       },
       {
-        d: zd,
-        a: "z" as const,
-        p: new THREE.Vector3(
+        dim: zd,
+        axis: "z",
+        pos: new THREE.Vector3(
           xO - lbM,
           yO - nO,
           ((zN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
         ),
       },
-    ].forEach(({ d, a, p }) => {
-      const s = makeTextSprite(d.name, {
-        color: AXIS_COLORS[a].css,
+    ];
+    dimLabelData.forEach(({ dim, axis, pos }) => {
+      const displayName = getDimensionDisplayName(dim);
+      const s = makeTextSprite(displayName, {
+        color: AXIS_COLORS[axis].css,
         size: 34,
         bold: true,
         scale: 0.65,
       });
-      s.position.copy(p);
+      s.position.copy(pos);
       s.userData = { conceptTag: "dimensions" };
       ctx.labelGroup.add(s);
     });
 
+    /* ---- axis lines ---- */
     const base = new THREE.Vector3(
       xO - CELL_STRIDE * 0.5,
       yO - CELL_STRIDE * 0.5,
@@ -754,7 +781,7 @@ const OlapCube: React.FC = () => {
   }, [axes, allCells]);
 
   /* ================================================================ */
-  /*  Concept overlay (unchanged, abbreviated)                         */
+  /*  Concept overlay                                                  */
   /* ================================================================ */
   useEffect(() => {
     const ctx = sceneRef.current;
@@ -763,6 +790,7 @@ const OlapCube: React.FC = () => {
     const met = ctx.cubeMetrics;
     const { xN, yN, zN, xOff: xO, yOff: yO, zOff: zO } = met;
 
+    /* ---- grey / un-grey ---- */
     ctx.cubeGroup.children.forEach((c) => {
       if (!(c instanceof THREE.Mesh) || !c.userData.cellInfo) return;
       const mat = c.material as THREE.MeshPhongMaterial;
@@ -777,14 +805,12 @@ const OlapCube: React.FC = () => {
         activeConcepts.has("cells") ||
         activeConcepts.has("facts") ||
         activeConcepts.has("measures");
-      if (hl) {
-        mat.color.copy(oc);
-        mat.opacity = 0.88;
-      } else {
-        mat.color.setHex(GREY_COLOR);
-        mat.opacity = GREY_OPACITY;
-      }
+      mat.color.setHex(hl ? undefined! : GREY_COLOR);
+      if (hl) mat.color.copy(oc);
+      else mat.color.setHex(GREY_COLOR);
+      mat.opacity = hl ? 0.88 : GREY_OPACITY;
     });
+
     const uLV = (o: THREE.Object3D) => {
       if (!anyConcept && !activeOp) {
         if (o instanceof THREE.Sprite) o.material.opacity = 1;
@@ -801,6 +827,7 @@ const OlapCube: React.FC = () => {
     };
     ctx.labelGroup.children.forEach(uLV);
     ctx.axisGroup.children.forEach(uLV);
+
     if (!anyConcept) return;
 
     const cc = new THREE.Vector3(
@@ -809,11 +836,16 @@ const OlapCube: React.FC = () => {
       zO + ((zN - 1) * CELL_STRIDE) / 2,
     );
 
+    /* ---- DIMENSIONS ---- */
     if (activeConcepts.has("dimensions")) {
       const cd = getConceptById("dimensions");
       (["x", "y", "z"] as const).forEach((ax) => {
         const dn =
-          ax === "x" ? met.xDimName : ax === "y" ? met.yDimName : met.zDimName;
+          ax === "x"
+            ? met.xDimDisplay
+            : ax === "y"
+              ? met.yDimDisplay
+              : met.zDimDisplay;
         const n = ax === "x" ? xN : ax === "y" ? yN : zN;
         const off =
           ax === "x"
@@ -833,11 +865,11 @@ const OlapCube: React.FC = () => {
                   yO - CELL_STRIDE,
                   ((n - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 1.8,
                 );
-        const b = makeBadgeSprite(`DIMENSION: ${dn}`, cd.color, {
+        const badge = makeBadgeSprite(`DIMENSION: ${dn}`, cd.color, {
           scale: 0.55,
         });
-        b.position.copy(off);
-        ctx.conceptGroup.add(b);
+        badge.position.copy(off);
+        ctx.conceptGroup.add(badge);
         const ae =
           ax === "x"
             ? new THREE.Vector3(
@@ -861,6 +893,8 @@ const OlapCube: React.FC = () => {
         );
       });
     }
+
+    /* ---- MEMBERS ---- */
     if (activeConcepts.has("members")) {
       const cd = getConceptById("members");
       const mp = new THREE.Vector3(
@@ -868,11 +902,11 @@ const OlapCube: React.FC = () => {
         yO - CELL_STRIDE * 1.6,
         zO - CELL_STRIDE * 1.6,
       );
-      const b = makeBadgeSprite("MEMBER (value in a dimension)", cd.color, {
+      const badge = makeBadgeSprite("MEMBER (value in a dimension)", cd.color, {
         scale: 0.48,
       });
-      b.position.copy(mp);
-      ctx.conceptGroup.add(b);
+      badge.position.copy(mp);
+      ctx.conceptGroup.add(badge);
       const tp = new THREE.Vector3(
         xO,
         yO - CELL_STRIDE * 0.88,
@@ -893,6 +927,8 @@ const OlapCube: React.FC = () => {
       rr.position.copy(tp);
       ctx.conceptGroup.add(rr);
     }
+
+    /* ---- CELLS ---- */
     if (activeConcepts.has("cells")) {
       const cd = getConceptById("cells");
       const ci = Math.min(1, xN - 1),
@@ -930,6 +966,8 @@ const OlapCube: React.FC = () => {
         makeDashedLine(bp, cp, new THREE.Color(cd.color).getHex()),
       );
     }
+
+    /* ---- MEASURES ---- */
     if (activeConcepts.has("measures")) {
       const cd = getConceptById("measures");
       const fp = new THREE.Vector3(
@@ -947,6 +985,8 @@ const OlapCube: React.FC = () => {
         makeDashedLine(bp, fp, new THREE.Color(cd.color).getHex()),
       );
     }
+
+    /* ---- FACTS ---- */
     if (activeConcepts.has("facts")) {
       const cd = getConceptById("facts");
       const hx = ((xN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8;
@@ -982,10 +1022,12 @@ const OlapCube: React.FC = () => {
         ),
       );
     }
+
+    /* ---- GRANULARITY ---- */
     if (activeConcepts.has("granularity")) {
       const cd = getConceptById("granularity");
-      const y2 = yO - CELL_STRIDE * 0.5,
-        z2 = zO - CELL_STRIDE * 0.5;
+      const y2 = yO - CELL_STRIDE * 0.5;
+      const z2 = zO - CELL_STRIDE * 0.5;
       for (let i = 0; i < xN; i++) {
         const dG = new THREE.SphereGeometry(0.06, 12, 12);
         const dM = new THREE.MeshBasicMaterial({ color: cd.color });
@@ -1002,7 +1044,7 @@ const OlapCube: React.FC = () => {
             new THREE.Color(cd.color).getHex(),
           ),
         );
-        for (let i = 0; i < xN; i++)
+        for (let i = 0; i < xN; i++) {
           ctx.conceptGroup.add(
             makeSolidLine(
               new THREE.Vector3(i * CELL_STRIDE + xO, y2, z2),
@@ -1011,23 +1053,18 @@ const OlapCube: React.FC = () => {
               0.4,
             ),
           );
+        }
       }
-      const bP = new THREE.Vector3(
-        ((xN - 1) * CELL_STRIDE) / 2 + xO,
-        y2 - 1.0,
-        z2,
+      const granBadge = makeBadgeSprite(
+        `GRANULARITY: ${xN} members (${met.xDimDisplay})`,
+        cd.color,
+        { scale: 0.45 },
       );
-      ctx.conceptGroup.add(
-        makeBadgeSprite(
-          `GRANULARITY: ${xN} members (${met.xDimName})`,
-          cd.color,
-          { scale: 0.45 },
-        ),
-      );
-      ctx.conceptGroup.children[
-        ctx.conceptGroup.children.length - 1
-      ].position.copy(bP);
+      granBadge.position.set(((xN - 1) * CELL_STRIDE) / 2 + xO, y2 - 1.0, z2);
+      ctx.conceptGroup.add(granBadge);
     }
+
+    /* ---- ATTRIBUTES ---- */
     if (activeConcepts.has("attributes")) {
       const cd = getConceptById("attributes");
       const tp = new THREE.Vector3(
@@ -1042,9 +1079,9 @@ const OlapCube: React.FC = () => {
         { k: "Color", v: "Silver" },
         { k: "Weight", v: "0.4 kg" },
       ];
-      const sy = tp.y,
-        ax = tp.x - CELL_STRIDE * 2.5,
-        az = tp.z - CELL_STRIDE * 0.5;
+      const sy = tp.y;
+      const ax = tp.x - CELL_STRIDE * 2.5;
+      const az = tp.z - CELL_STRIDE * 0.5;
       attrs.forEach((a, i) => {
         const l = makeBadgeSprite(
           `${a.k}: ${a.v}`,
@@ -1067,104 +1104,166 @@ const OlapCube: React.FC = () => {
         ),
       );
     }
+
+    /* ---- HIERARCHIES ---- */
     if (activeConcepts.has("hierarchies")) {
       const cd = getConceptById("hierarchies");
       const xDim = getDimensionById(met.xDimId)!;
       const hier = xDim.hierarchy;
+
       if (hier && hier.length > 0) {
-        const bx = ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 2.5;
-        const by = yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE;
-        const bz = zO + ((zN - 1) * CELL_STRIDE) / 2;
-        const ls = 1.6;
-        const hc = new THREE.Color(cd.color).getHex();
-        ctx.conceptGroup.add(
-          Object.assign(
-            makeBadgeSprite(`HIERARCHY: ${xDim.name}`, cd.color, {
-              scale: 0.52,
-            }),
-            { position: new THREE.Vector3(bx, by + 1.0, bz) },
-          ) as THREE.Sprite,
+        const treeBaseX = ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 2.5;
+        const treeBaseY = yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE;
+        const treeBaseZ = zO + ((zN - 1) * CELL_STRIDE) / 2;
+        const levelSpacing = 1.6;
+        const conceptCol = new THREE.Color(cd.color).getHex();
+
+        /* which level is currently displayed? */
+        const currentLevelName = findCurrentLevel(xDim);
+
+        /* title */
+        const titleBadge = makeBadgeSprite(
+          `HIERARCHY: ${xDim.name}`,
+          cd.color,
+          { scale: 0.52 },
         );
-        interface NI {
+        titleBadge.position.set(treeBaseX, treeBaseY + 1.0, treeBaseZ);
+        ctx.conceptGroup.add(titleBadge);
+
+        /* draw tree */
+        interface NodeInfo {
           pos: THREE.Vector3;
         }
-        const ln: NI[][] = [];
-        hier.forEach((lv, li) => {
-          const yp = by - li * ls;
-          const mm =
-            lv.members.length > 4
-              ? [...lv.members.slice(0, 3), "..."]
-              : lv.members;
-          const tw = (mm.length - 1) * 1.2;
-          const ns: NI[] = [];
-          const ll = makeBadgeSprite(lv.levelName, "#555", { scale: 0.35 });
-          ll.position.set(bx - tw / 2 - 1.6, yp, bz);
-          ctx.conceptGroup.add(ll);
-          mm.forEach((m, mi) => {
-            const xp = bx - tw / 2 + mi * 1.2;
-            const p = new THREE.Vector3(xp, yp, bz);
-            const ng = new THREE.CircleGeometry(0.18, 24);
-            const nm = new THREE.MeshBasicMaterial({
-              color: cd.color,
+        const levelNodes: NodeInfo[][] = [];
+        let maxDisplayWidth = 0;
+
+        hier.forEach((level, li) => {
+          const yPos = treeBaseY - li * levelSpacing;
+          const displayMembers =
+            level.members.length > 4
+              ? [...level.members.slice(0, 3), "…"]
+              : [...level.members];
+          const memberSpacing = 1.2;
+          const totalWidth = Math.max(
+            0,
+            (displayMembers.length - 1) * memberSpacing,
+          );
+          if (totalWidth > maxDisplayWidth) maxDisplayWidth = totalWidth;
+          const nodes: NodeInfo[] = [];
+
+          const isCurrent = level.levelName === currentLevelName;
+
+          /* level name label */
+          const levelLabel = makeBadgeSprite(
+            isCurrent ? `▸ ${level.levelName} (current)` : level.levelName,
+            isCurrent ? cd.color : "#777",
+            { scale: 0.35 },
+          );
+          levelLabel.position.set(
+            treeBaseX - totalWidth / 2 - 1.8,
+            yPos,
+            treeBaseZ,
+          );
+          ctx.conceptGroup.add(levelLabel);
+
+          /* member nodes */
+          displayMembers.forEach((member, mi) => {
+            const xPos = treeBaseX - totalWidth / 2 + mi * memberSpacing;
+            const pos = new THREE.Vector3(xPos, yPos, treeBaseZ);
+
+            const nodeRadius = isCurrent ? 0.22 : 0.16;
+            const nodeG = new THREE.CircleGeometry(nodeRadius, 24);
+            const nodeM = new THREE.MeshBasicMaterial({
+              color: isCurrent ? cd.color : "#999",
               side: THREE.DoubleSide,
               depthTest: false,
               transparent: true,
-              opacity: 0.85,
+              opacity: isCurrent ? 0.95 : 0.65,
             });
-            const n = new THREE.Mesh(ng, nm);
-            n.position.copy(p);
-            ctx.conceptGroup.add(n);
-            const lb = makeTextSprite(m, {
-              color: "#333",
-              size: 26,
+            const node = new THREE.Mesh(nodeG, nodeM);
+            node.position.copy(pos);
+            ctx.conceptGroup.add(node);
+
+            const lbl = makeTextSprite(member, {
+              color: isCurrent ? "#111" : "#666",
+              size: isCurrent ? 28 : 24,
+              bold: isCurrent,
               scale: 0.35,
             });
-            lb.position.set(xp, yp - 0.35, bz);
-            ctx.conceptGroup.add(lb);
-            ns.push({ pos: p });
+            lbl.position.set(xPos, yPos - 0.4, treeBaseZ);
+            ctx.conceptGroup.add(lbl);
+
+            nodes.push({ pos });
           });
-          ln.push(ns);
+
+          levelNodes.push(nodes);
         });
-        for (let li = 0; li < ln.length - 1; li++) {
-          const ps = ln[li],
-            cs = ln[li + 1];
-          const cpp = Math.ceil(cs.length / ps.length);
-          cs.forEach((ch, ci) => {
-            const pi = Math.min(Math.floor(ci / cpp), ps.length - 1);
+
+        /* connecting lines */
+        for (let li = 0; li < levelNodes.length - 1; li++) {
+          const parents = levelNodes[li];
+          const children = levelNodes[li + 1];
+          if (parents.length === 0 || children.length === 0) continue;
+          const cpp = Math.max(1, Math.ceil(children.length / parents.length));
+          children.forEach((child, ci) => {
+            const pi = Math.min(Math.floor(ci / cpp), parents.length - 1);
             ctx.conceptGroup.add(
               makeSolidLine(
-                ps[pi].pos.clone().add(new THREE.Vector3(0, -0.2, 0)),
-                ch.pos.clone().add(new THREE.Vector3(0, 0.2, 0)),
-                hc,
-                0.4,
+                parents[pi].pos.clone().add(new THREE.Vector3(0, -0.25, 0)),
+                child.pos.clone().add(new THREE.Vector3(0, 0.25, 0)),
+                conceptCol,
+                0.35,
               ),
             );
           });
         }
-        const at = new THREE.Vector3(
+
+        /* connector to the X axis */
+        const axisTarget = new THREE.Vector3(
           ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 0.6,
           yO - CELL_STRIDE * 0.5,
           zO - CELL_STRIDE * 0.5,
         );
-        const tb = new THREE.Vector3(bx, by - (hier.length - 1) * ls - 0.8, bz);
-        ctx.conceptGroup.add(makeDashedLine(tb, at, hc));
-        const mxM = Math.max(...hier.map((l) => Math.min(l.members.length, 4)));
-        const tw2 = (mxM - 1) * 1.2;
-        const al = makeBadgeSprite("▼ Drill   ▲ Roll", cd.color, {
-          scale: 0.38,
-        });
-        al.position.set(
-          bx + tw2 * 0.5 + 2.0,
-          by - ((hier.length - 1) * ls) / 2,
-          bz,
+        const treeBottom = new THREE.Vector3(
+          treeBaseX,
+          treeBaseY - (hier.length - 1) * levelSpacing - 0.8,
+          treeBaseZ,
         );
-        ctx.conceptGroup.add(al);
+        ctx.conceptGroup.add(
+          makeDashedLine(treeBottom, axisTarget, conceptCol),
+        );
+
+        /* drill / roll annotation */
+        const annotateX = treeBaseX + maxDisplayWidth * 0.5 + 2.2;
+        const annotateYTop = treeBaseY - 0.2;
+        const annotateYBot = treeBaseY - (hier.length - 1) * levelSpacing + 0.2;
+
+        const arrowLabel = makeBadgeSprite(
+          "▼ Drill Down  ▲ Roll Up",
+          cd.color,
+          { scale: 0.36 },
+        );
+        arrowLabel.position.set(
+          annotateX,
+          (annotateYTop + annotateYBot) / 2,
+          treeBaseZ,
+        );
+        ctx.conceptGroup.add(arrowLabel);
+
+        ctx.conceptGroup.add(
+          makeSolidLine(
+            new THREE.Vector3(annotateX, annotateYTop, treeBaseZ),
+            new THREE.Vector3(annotateX, annotateYBot, treeBaseZ),
+            conceptCol,
+            0.45,
+          ),
+        );
       }
     }
   }, [activeConcepts, anyConcept, axes, allCells, activeOp]);
 
   /* ================================================================ */
-  /*  OPERATION STEP TARGETS                                           */
+  /*  Operation step targets                                           */
   /* ================================================================ */
   const getStepEndTargets = useCallback(
     (opId: string, step: number): Map<string, Partial<CellAnimTarget>> => {
@@ -1174,13 +1273,11 @@ const OlapCube: React.FC = () => {
       const met = ctx.cubeMetrics;
       const { xN, yN, zN, xOff: xO, yOff: yO, zOff: zO } = met;
       const ends = new Map<string, Partial<CellAnimTarget>>();
-
       const sliceZ = Math.min(1, zN - 1);
       const diceXMax = Math.min(1, xN - 1);
       const diceYMax = Math.min(1, yN - 1);
 
       switch (opId) {
-        /* ---- SLICE ---- */
         case "slice": {
           if (step === 0) {
             ctx.meshMap.forEach((m, k) => {
@@ -1230,43 +1327,41 @@ const OlapCube: React.FC = () => {
           }
           break;
         }
-
-        /* ---- DICE ---- */
         case "dice": {
-          const inDice = (info: CellInfo) =>
-            info.xIndex <= diceXMax && info.yIndex <= diceYMax;
+          const inD = (i: CellInfo) =>
+            i.xIndex <= diceXMax && i.yIndex <= diceYMax;
           if (step === 0) {
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
               ends.set(k, {
-                endOpacity: inDice(info) ? 1 : 0.1,
-                endColor: inDice(info) ? oc.clone() : new THREE.Color(0xdddddd),
-                endScale: inDice(info) ? 1.05 : 0.85,
+                endOpacity: inD(i) ? 1 : 0.1,
+                endColor: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
+                endScale: inD(i) ? 1.05 : 0.85,
               });
             });
           } else if (step === 1) {
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
               ends.set(k, {
-                endOpacity: inDice(info) ? 1 : 0,
-                endScale: inDice(info) ? 1 : 0.01,
-                endColor: inDice(info) ? oc.clone() : new THREE.Color(0xdddddd),
+                endOpacity: inD(i) ? 1 : 0,
+                endScale: inD(i) ? 1 : 0.01,
+                endColor: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
               });
             });
           } else {
             const cxO = (-diceXMax * CELL_STRIDE) / 2;
             const cyO = (-diceYMax * CELL_STRIDE) / 2;
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              if (inDice(info)) {
+              if (inD(i)) {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
-                    info.xIndex * CELL_STRIDE + cxO,
-                    info.yIndex * CELL_STRIDE + cyO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    i.xIndex * CELL_STRIDE + cxO,
+                    i.yIndex * CELL_STRIDE + cyO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 1,
                   endScale: 1.08,
@@ -1279,8 +1374,6 @@ const OlapCube: React.FC = () => {
           }
           break;
         }
-
-        /* ---- PIVOT ---- */
         case "pivot": {
           if (step === 0) {
             ctx.meshMap.forEach((m, k) => {
@@ -1290,17 +1383,17 @@ const OlapCube: React.FC = () => {
                 endColor: oc.clone().offsetHSL(0, -0.1, 0.05),
               });
             });
-          } else if (step === 1 || step === 2) {
+          } else {
             const nxO = (-(yN - 1) * CELL_STRIDE) / 2;
             const nyO = (-(xN - 1) * CELL_STRIDE) / 2;
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
               ends.set(k, {
                 endPos: new THREE.Vector3(
-                  info.yIndex * CELL_STRIDE + nxO,
-                  info.xIndex * CELL_STRIDE + nyO,
-                  info.zIndex * CELL_STRIDE + zO,
+                  i.yIndex * CELL_STRIDE + nxO,
+                  i.xIndex * CELL_STRIDE + nyO,
+                  i.zIndex * CELL_STRIDE + zO,
                 ),
                 endOpacity: 0.88,
                 endScale: 1,
@@ -1310,33 +1403,28 @@ const OlapCube: React.FC = () => {
           }
           break;
         }
-
-        /* ---- DRILL-DOWN ---- */
         case "drilldown": {
           if (step === 0) {
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
               ends.set(k, {
-                endOpacity: info.xIndex === 0 ? 1 : 0.5,
+                endOpacity: i.xIndex === 0 ? 1 : 0.5,
                 endColor:
-                  info.xIndex === 0 ? oc.clone() : new THREE.Color(0xcccccc),
-                endScale: info.xIndex === 0 ? 1.08 : 0.92,
+                  i.xIndex === 0 ? oc.clone() : new THREE.Color(0xcccccc),
+                endScale: i.xIndex === 0 ? 1.08 : 0.92,
               });
             });
           } else if (step === 1) {
-            // original X=0 cells shift left
-            // temp cells appear at X=0 position (will shift right)
-            // X>=1 cells shift right by one stride
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              if (info.xIndex === 0) {
+              if (i.xIndex === 0) {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
                     xO - CELL_STRIDE * 0.1,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 1,
                   endScale: 1,
@@ -1345,9 +1433,9 @@ const OlapCube: React.FC = () => {
               } else {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
-                    (info.xIndex + 1) * CELL_STRIDE + xO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    (i.xIndex + 1) * CELL_STRIDE + xO,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 0.65,
                   endScale: 1,
@@ -1355,7 +1443,6 @@ const OlapCube: React.FC = () => {
                 });
               }
             });
-            // temp meshes
             anim.tempMeshMap.forEach((tm, k) => {
               ends.set(k, {
                 endPos: new THREE.Vector3(
@@ -1368,17 +1455,16 @@ const OlapCube: React.FC = () => {
               });
             });
           } else {
-            // finalize drill-down: spread nicely
+            const nxO = (-xN * CELL_STRIDE) / 2;
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              const newX = info.xIndex === 0 ? 0 : info.xIndex + 1;
-              const nxO = (-xN * CELL_STRIDE) / 2;
+              const newX = i.xIndex === 0 ? 0 : i.xIndex + 1;
               ends.set(k, {
                 endPos: new THREE.Vector3(
                   newX * CELL_STRIDE + nxO,
-                  info.yIndex * CELL_STRIDE + yO,
-                  info.zIndex * CELL_STRIDE + zO,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
                 ),
                 endOpacity: 0.88,
                 endScale: 1,
@@ -1386,10 +1472,10 @@ const OlapCube: React.FC = () => {
               });
             });
             anim.tempMeshMap.forEach((tm, k) => {
-              const nxO = (-xN * CELL_STRIDE) / 2;
+              const nxO2 = (-xN * CELL_STRIDE) / 2;
               ends.set(k, {
                 endPos: new THREE.Vector3(
-                  1 * CELL_STRIDE + nxO,
+                  1 * CELL_STRIDE + nxO2,
                   tm.position.y,
                   tm.position.z,
                 ),
@@ -1400,14 +1486,12 @@ const OlapCube: React.FC = () => {
           }
           break;
         }
-
-        /* ---- ROLL-UP ---- */
         case "rollup": {
           if (step === 0) {
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              const hl = info.xIndex === 0 || info.xIndex === 1;
+              const hl = i.xIndex === 0 || i.xIndex === 1;
               ends.set(k, {
                 endOpacity: hl ? 1 : 0.45,
                 endColor: hl ? oc.clone() : new THREE.Color(0xcccccc),
@@ -1416,34 +1500,31 @@ const OlapCube: React.FC = () => {
             });
           } else if (step === 1) {
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              if (info.xIndex === 1) {
-                // merge into X=0 position, fade out
+              if (i.xIndex === 1) {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
                     0 * CELL_STRIDE + xO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 0,
                   endScale: 0.5,
                   endColor: oc.clone(),
                 });
-              } else if (info.xIndex === 0) {
-                // grow to show aggregation
+              } else if (i.xIndex === 0) {
                 ends.set(k, {
                   endOpacity: 1,
                   endScale: 1.2,
                   endColor: oc.clone().offsetHSL(0, 0.1, 0.05),
                 });
               } else {
-                // shift left
                 ends.set(k, {
                   endPos: new THREE.Vector3(
-                    (info.xIndex - 1) * CELL_STRIDE + xO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    (i.xIndex - 1) * CELL_STRIDE + xO,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 0.7,
                   endScale: 1,
@@ -1452,20 +1533,19 @@ const OlapCube: React.FC = () => {
               }
             });
           } else {
-            // finalize
             const nxN = xN - 1;
-            const nxO = (-(nxN - 1) * CELL_STRIDE) / 2;
+            const nxO2 = (-(nxN - 1) * CELL_STRIDE) / 2;
             ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
+              const i = m.userData.cellInfo as CellInfo;
               const oc = m.userData.originalColor as THREE.Color;
-              if (info.xIndex === 1) {
+              if (i.xIndex === 1) {
                 ends.set(k, { endOpacity: 0, endScale: 0.01 });
-              } else if (info.xIndex === 0) {
+              } else if (i.xIndex === 0) {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
-                    0 * CELL_STRIDE + nxO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    0 * CELL_STRIDE + nxO2,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 1,
                   endScale: 1.15,
@@ -1474,9 +1554,9 @@ const OlapCube: React.FC = () => {
               } else {
                 ends.set(k, {
                   endPos: new THREE.Vector3(
-                    (info.xIndex - 1) * CELL_STRIDE + nxO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    info.zIndex * CELL_STRIDE + zO,
+                    (i.xIndex - 1) * CELL_STRIDE + nxO2,
+                    i.yIndex * CELL_STRIDE + yO,
+                    i.zIndex * CELL_STRIDE + zO,
                   ),
                   endOpacity: 0.88,
                   endScale: 1,
@@ -1494,7 +1574,7 @@ const OlapCube: React.FC = () => {
   );
 
   /* ================================================================ */
-  /*  Create 3D labels for each operation step                         */
+  /*  Operation step scene labels                                      */
   /* ================================================================ */
   const createStepLabels = useCallback(
     (opId: string, step: number): THREE.Object3D[] => {
@@ -1514,7 +1594,7 @@ const OlapCube: React.FC = () => {
           const memberName = zd.members[sliceZ];
           if (step === 0) {
             const b = makeBadgeSprite(
-              `✂️ Slice: ${met.zDimName} = "${memberName}"`,
+              `✂️ Slice: ${met.zDimDisplay} = "${memberName}"`,
               color,
               { scale: 0.55 },
             );
@@ -1524,7 +1604,6 @@ const OlapCube: React.FC = () => {
               sliceZ * CELL_STRIDE + zO,
             );
             labels.push(b);
-            // plane indicator
             const plW = (xN - 1) * CELL_STRIDE + CELL_SIZE * 1.5;
             const plH = (yN - 1) * CELL_STRIDE + CELL_SIZE * 1.5;
             const plG = new THREE.PlaneGeometry(plW, plH);
@@ -1542,7 +1621,6 @@ const OlapCube: React.FC = () => {
               sliceZ * CELL_STRIDE + zO,
             );
             labels.push(pl);
-            // border
             const plBG = new THREE.EdgesGeometry(plG);
             const plBM = new THREE.LineBasicMaterial({
               color,
@@ -1554,7 +1632,7 @@ const OlapCube: React.FC = () => {
             labels.push(plB);
           } else if (step === 1) {
             const b = makeBadgeSprite(
-              "Removing cells outside the plane...",
+              "Removing cells outside the plane…",
               color,
               { scale: 0.5 },
             );
@@ -1566,7 +1644,7 @@ const OlapCube: React.FC = () => {
             labels.push(b);
           } else {
             const b = makeBadgeSprite(
-              `Result: 2D table (${met.xDimName} × ${met.yDimName})`,
+              `Result: 2D table (${met.xDimDisplay} × ${met.yDimDisplay})`,
               color,
               { scale: 0.55 },
             );
@@ -1596,7 +1674,6 @@ const OlapCube: React.FC = () => {
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
             labels.push(b);
-            // bounding box
             const bw = (dx + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
             const bh = (dy + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
             const bd = zN * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
@@ -1619,7 +1696,7 @@ const OlapCube: React.FC = () => {
             );
             labels.push(bb);
           } else if (step === 1) {
-            const b = makeBadgeSprite("Extracting sub-cube...", color, {
+            const b = makeBadgeSprite("Extracting sub-cube…", color, {
               scale: 0.48,
             });
             b.position.set(xO - CELL_STRIDE * 2, yO, zO);
@@ -1642,7 +1719,7 @@ const OlapCube: React.FC = () => {
         case "pivot": {
           if (step === 0) {
             const b = makeBadgeSprite(
-              `🔄 Pivot: Swap ${met.xDimName} (X) ↔ ${met.yDimName} (Y)`,
+              `🔄 Pivot: Swap ${met.xDimDisplay} (X) ↔ ${met.yDimDisplay} (Y)`,
               color,
               { scale: 0.52 },
             );
@@ -1653,7 +1730,7 @@ const OlapCube: React.FC = () => {
             );
             labels.push(b);
           } else if (step === 1) {
-            const b = makeBadgeSprite("Rotating cells...", color, {
+            const b = makeBadgeSprite("Rotating cells…", color, {
               scale: 0.48,
             });
             b.position.set(
@@ -1664,7 +1741,7 @@ const OlapCube: React.FC = () => {
             labels.push(b);
           } else {
             const b = makeBadgeSprite(
-              `Done: X = ${met.yDimName}, Y = ${met.xDimName}`,
+              `Done: X = ${met.yDimDisplay}, Y = ${met.xDimDisplay}`,
               color,
               { scale: 0.52 },
             );
@@ -1685,12 +1762,15 @@ const OlapCube: React.FC = () => {
             hier && hier.length >= 3
               ? hier[2].members.slice(0, 2)
               : ["Child A", "Child B"];
+          const curLevel = findCurrentLevel(xd) ?? "Current";
+          const nextLevel = hier
+            ? (hier.find((_l, i) => i > 0 && hier[i - 1].levelName === curLevel)
+                ?.levelName ?? "Detail")
+            : "Detail";
           if (step === 0) {
-            const b = makeBadgeSprite(
-              `🔍 Current: ${hier?.[1]?.levelName ?? "Category"} level`,
-              color,
-              { scale: 0.5 },
-            );
+            const b = makeBadgeSprite(`🔍 Current level: ${curLevel}`, color, {
+              scale: 0.5,
+            });
             b.position.set(
               xO,
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
@@ -1709,24 +1789,25 @@ const OlapCube: React.FC = () => {
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
             labels.push(b);
-            // arrow from old to new positions
-            const arr = makeBadgeSprite(children[0], "#2d9", { scale: 0.38 });
-            arr.position.set(
+            const a1 = makeBadgeSprite(children[0], "#2d9", { scale: 0.38 });
+            a1.position.set(
               xO - CELL_STRIDE * 0.1,
               yO - CELL_STRIDE * 1.5,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(arr);
-            const arr2 = makeBadgeSprite(children[1], "#29d", { scale: 0.38 });
-            arr2.position.set(
+            labels.push(a1);
+            const a2 = makeBadgeSprite(children[1] ?? "…", "#29d", {
+              scale: 0.38,
+            });
+            a2.position.set(
               xO + CELL_STRIDE * 0.9,
               yO - CELL_STRIDE * 1.5,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(arr2);
+            labels.push(a2);
           } else {
             const b = makeBadgeSprite(
-              `Detail: ${hier?.[2]?.levelName ?? "Item"} level (${xN + 1} members)`,
+              `Detail: ${nextLevel} level (${xN + 1} positions)`,
               color,
               { scale: 0.5 },
             );
@@ -1741,10 +1822,10 @@ const OlapCube: React.FC = () => {
         }
         case "rollup": {
           const xd = getDimensionById(met.xDimId)!;
-          const hier = xd.hierarchy;
+          const curLevel = findCurrentLevel(xd) ?? "Detail";
           if (step === 0) {
             const b = makeBadgeSprite(
-              `📊 Current: ${hier?.[1]?.levelName ?? "Detail"} (${xN} members)`,
+              `📊 Current: ${curLevel} (${xN} members)`,
               color,
               { scale: 0.5 },
             );
@@ -1756,7 +1837,7 @@ const OlapCube: React.FC = () => {
             labels.push(b);
           } else if (step === 1) {
             const b = makeBadgeSprite(
-              `Merging "${xd.members[0]}" + "${xd.members[1]}" → aggregated`,
+              `Merging "${xd.members[0]}" + "${xd.members[Math.min(1, xN - 1)]}" → aggregated`,
               color,
               { scale: 0.48 },
             );
@@ -1766,18 +1847,16 @@ const OlapCube: React.FC = () => {
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
             labels.push(b);
-            const sumBadge = makeBadgeSprite("Σ Sum", "#d97706", {
-              scale: 0.4,
-            });
-            sumBadge.position.set(
+            const sb = makeBadgeSprite("Σ Sum", "#d97706", { scale: 0.4 });
+            sb.position.set(
               xO + CELL_STRIDE * 0.1,
               yO - CELL_STRIDE * 1.2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(sumBadge);
+            labels.push(sb);
           } else {
             const b = makeBadgeSprite(
-              `Summary: ${hier?.[0]?.levelName ?? "Parent"} level (${xN - 1} members)`,
+              `Summary: ${xN - 1} members (aggregated)`,
               color,
               { scale: 0.5 },
             );
@@ -1805,7 +1884,6 @@ const OlapCube: React.FC = () => {
       const anim = animRef.current;
       if (!ctx || !anim) return;
 
-      // clear old labels
       anim.sceneLabels.forEach((l) => {
         ctx.opGroup.remove(l);
         if (l instanceof THREE.Mesh) {
@@ -1823,7 +1901,6 @@ const OlapCube: React.FC = () => {
       });
       anim.sceneLabels = [];
 
-      // create temp meshes for drill-down step 1
       if (opId === "drilldown" && step === 1 && anim.tempMeshes.length === 0) {
         let ti = 0;
         ctx.meshMap.forEach((m) => {
@@ -1842,31 +1919,24 @@ const OlapCube: React.FC = () => {
           );
           tm.position.copy(m.position);
           tm.scale.setScalar(0.01);
-          // add wireframe
-          const eG = new THREE.EdgesGeometry(tm.geometry);
-          const eM = new THREE.LineBasicMaterial({
+          const eG2 = new THREE.EdgesGeometry(tm.geometry);
+          const eM2 = new THREE.LineBasicMaterial({
             color: 0x999999,
             transparent: true,
             opacity: 0.35,
           });
-          tm.add(new THREE.LineSegments(eG, eM));
+          tm.add(new THREE.LineSegments(eG2, eM2));
           ctx.cubeGroup.add(tm);
-          const key = `temp-${ti++}`;
           anim.tempMeshes.push(tm);
-          anim.tempMeshMap.set(key, tm);
+          anim.tempMeshMap.set(`temp-${ti++}`, tm);
         });
       }
 
-      // get targets
       const endTargets = getStepEndTargets(opId, step);
       const targets = captureTargets(ctx.meshMap, anim.tempMeshMap, endTargets);
-
-      // create scene labels
-      const labels = createStepLabels(opId, step);
-      labels.forEach((l) => ctx.opGroup.add(l));
-      anim.sceneLabels = labels;
-
-      // set animation state
+      const sceneLabels = createStepLabels(opId, step);
+      sceneLabels.forEach((l) => ctx.opGroup.add(l));
+      anim.sceneLabels = sceneLabels;
       anim.step = step;
       anim.startTime = performance.now();
       const opDef = getOperationById(opId)!;
@@ -1880,8 +1950,6 @@ const OlapCube: React.FC = () => {
     (opId: string) => {
       const ctx = sceneRef.current;
       if (!ctx) return;
-
-      // save originals
       const originals = new Map<string, OrigState>();
       ctx.meshMap.forEach((m, k) => {
         const mat = m.material as THREE.MeshPhongMaterial;
@@ -1892,7 +1960,6 @@ const OlapCube: React.FC = () => {
           color: mat.color.clone(),
         });
       });
-
       animRef.current = {
         opId,
         step: 0,
@@ -1904,18 +1971,14 @@ const OlapCube: React.FC = () => {
         tempMeshMap: new Map(),
         sceneLabels: [],
       };
-
-      // close concept mode and selection
       if (conceptMode) {
         setConceptMode(false);
         setActiveConcepts(new Set());
       }
       selectCellByInfo(null);
-
       setActiveOp(opId);
       setCurrentStep(0);
       setStepDone(false);
-
       setupStep(opId, 0);
     },
     [conceptMode, setupStep, selectCellByInfo],
@@ -1925,16 +1988,12 @@ const OlapCube: React.FC = () => {
     const ctx = sceneRef.current;
     const anim = animRef.current;
     if (!ctx || !anim) return;
-
     cancelAnimationFrame(animRafRef.current);
-
-    // remove temp meshes
     anim.tempMeshes.forEach((m) => {
       ctx.cubeGroup.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     });
-    // remove labels
     anim.sceneLabels.forEach((l) => {
       ctx.opGroup.remove(l);
       if (l instanceof THREE.Mesh) {
@@ -1950,8 +2009,6 @@ const OlapCube: React.FC = () => {
         (l.material as THREE.Material).dispose();
       }
     });
-
-    // restore originals
     anim.originalStates.forEach((orig, k) => {
       const mesh = ctx.meshMap.get(k);
       if (!mesh) return;
@@ -1962,7 +2019,6 @@ const OlapCube: React.FC = () => {
       mat.color.copy(orig.color);
       mat.emissive.setHex(0);
     });
-
     animRef.current = null;
     setActiveOp(null);
     setCurrentStep(0);
@@ -1991,49 +2047,46 @@ const OlapCube: React.FC = () => {
     const anim = animRef.current;
     const ctx = sceneRef.current;
     if (!anim || !ctx || !activeOp) return;
-
     let id = 0;
     let done = false;
-
     const tick = () => {
-      const elapsed = performance.now() - anim.startTime;
-      const progress = Math.min(elapsed / anim.duration, 1);
-      const t = easeInOutCubic(progress);
-
-      applyProgress(ctx.meshMap, anim.tempMeshMap, anim.targets, t);
-
-      if (progress < 1) {
+      const p = Math.min(
+        (performance.now() - anim.startTime) / anim.duration,
+        1,
+      );
+      applyProgress(
+        ctx.meshMap,
+        anim.tempMeshMap,
+        anim.targets,
+        easeInOutCubic(p),
+      );
+      if (p < 1) {
         id = requestAnimationFrame(tick);
       } else if (!done) {
         done = true;
         setStepDone(true);
       }
     };
-
     id = requestAnimationFrame(tick);
     animRafRef.current = id;
     return () => cancelAnimationFrame(id);
   }, [activeOp, currentStep]);
 
-  // Auto-advance
   useEffect(() => {
     if (!stepDone || !autoPlay || !activeOp) return;
     const opDef = getOperationById(activeOp);
-    if (!opDef) return;
     const anim = animRef.current;
-    if (!anim) return;
-    if (anim.step >= opDef.steps.length - 1) return;
+    if (!opDef || !anim || anim.step >= opDef.steps.length - 1) return;
     const timer = setTimeout(() => goStep(1), 800);
     return () => clearTimeout(timer);
   }, [stepDone, autoPlay, activeOp, goStep]);
 
   /* ================================================================ */
-  /*  Per-frame styling (skip during operations)                       */
+  /*  Per-frame styling                                                */
   /* ================================================================ */
   useEffect(() => {
     const ctx = sceneRef.current;
-    if (!ctx) return;
-    if (activeOp) return; // operations handle their own styling
+    if (!ctx || activeOp) return;
     let pid = 0;
     const fl = () => {
       pid = requestAnimationFrame(fl);
@@ -2056,10 +2109,10 @@ const OlapCube: React.FC = () => {
           }
         }
         if (sel && !anyConcept) {
-          const mx = info.xIndex === sel.xIndex ? 1 : 0;
-          const my = info.yIndex === sel.yIndex ? 1 : 0;
-          const mz = info.zIndex === sel.zIndex ? 1 : 0;
-          const mm = mx + my + mz;
+          const mm =
+            (info.xIndex === sel.xIndex ? 1 : 0) +
+            (info.yIndex === sel.yIndex ? 1 : 0) +
+            (info.zIndex === sel.zIndex ? 1 : 0);
           if (isS) {
             mat.emissive.setHex(0x222222);
             mat.opacity = 1;
@@ -2114,6 +2167,7 @@ const OlapCube: React.FC = () => {
     },
     [],
   );
+
   const onPointerMove = useCallback(
     (e: React.MouseEvent) => {
       if (activeOp) return;
@@ -2126,8 +2180,9 @@ const OlapCube: React.FC = () => {
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
       ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
-      const hits = ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true);
-      const hm = findCellMesh(hits);
+      const hm = findCellMesh(
+        ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true),
+      );
       if (hm) {
         ctx.hoveredMesh = hm;
         setHoverCell(hm.userData.cellInfo);
@@ -2141,9 +2196,11 @@ const OlapCube: React.FC = () => {
     },
     [findCellMesh, activeOp],
   );
+
   const onPointerDown = useCallback((e: React.MouseEvent) => {
     mouseDownPos.current = { x: e.clientX, y: e.clientY };
   }, []);
+
   const onPointerUp = useCallback(
     (e: React.MouseEvent) => {
       if (activeOp) return;
@@ -2162,12 +2219,14 @@ const OlapCube: React.FC = () => {
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
       ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
-      const hits = ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true);
-      const hm = findCellMesh(hits);
+      const hm = findCellMesh(
+        ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true),
+      );
       selectCellByInfo(hm ? hm.userData.cellInfo : null);
     },
     [findCellMesh, selectCellByInfo, activeOp],
   );
+
   const onPointerLeave = useCallback(() => {
     const ctx = sceneRef.current;
     if (ctx) ctx.hoveredMesh = null;
@@ -2175,7 +2234,7 @@ const OlapCube: React.FC = () => {
   }, []);
 
   /* ================================================================ */
-  /*  Dimension swap / concept toggles / table helpers                 */
+  /*  Misc handlers                                                    */
   /* ================================================================ */
   const changeAxis = useCallback(
     (axis: keyof AxisAssignment, dimId: string) => {
@@ -2193,10 +2252,12 @@ const OlapCube: React.FC = () => {
     },
     [activeOp],
   );
+
   const closeDetail = useCallback(
     () => selectCellByInfo(null),
     [selectCellByInfo],
   );
+
   const toggleConcept = useCallback((id: ConceptId) => {
     setActiveConcepts((p) => {
       const n = new Set(p);
@@ -2233,6 +2294,7 @@ const OlapCube: React.FC = () => {
     },
     [selCell, selKey],
   );
+
   const tableStats = useMemo(() => {
     const v = allCells.map((c) => c.value);
     return {
@@ -2270,7 +2332,7 @@ const OlapCube: React.FC = () => {
               >
                 {DIMENSIONS.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name}
+                    {getDimensionDisplayName(d)}
                   </option>
                 ))}
               </select>
@@ -2386,7 +2448,7 @@ const OlapCube: React.FC = () => {
             onMouseLeave={onPointerLeave}
           />
 
-          {/* ---- OPERATIONS PANEL ---- */}
+          {/* Operations panel */}
           <div className="olap-ops-panel">
             <div className="olap-ops-header">
               <span className="olap-ops-title">⚙ OLAP Operations</span>
@@ -2396,8 +2458,6 @@ const OlapCube: React.FC = () => {
                 </button>
               )}
             </div>
-
-            {/* Operation selector */}
             {!activeOp && (
               <div className="olap-ops-grid">
                 {OPERATIONS.map((op) => (
@@ -2414,8 +2474,6 @@ const OlapCube: React.FC = () => {
                 ))}
               </div>
             )}
-
-            {/* Active operation controls */}
             {activeOp && activeOpDef && (
               <div className="olap-ops-active">
                 <div className="olap-ops-active-title">
@@ -2423,19 +2481,11 @@ const OlapCube: React.FC = () => {
                     {activeOpDef.icon} {activeOpDef.name}
                   </span>
                 </div>
-
-                {/* Step indicators */}
                 <div className="olap-ops-steps">
-                  {activeOpDef.steps.map((_s, i) => (
+                  {activeOpDef.steps.map((_, i) => (
                     <React.Fragment key={i}>
                       <div
-                        className={`olap-ops-step-dot ${
-                          i < currentStep
-                            ? "done"
-                            : i === currentStep
-                              ? "current"
-                              : ""
-                        }`}
+                        className={`olap-ops-step-dot ${i < currentStep ? "done" : i === currentStep ? "current" : ""}`}
                         style={
                           i <= currentStep
                             ? {
@@ -2455,9 +2505,7 @@ const OlapCube: React.FC = () => {
                       </div>
                       {i < activeOpDef.steps.length - 1 && (
                         <div
-                          className={`olap-ops-step-line ${
-                            i < currentStep ? "done" : ""
-                          }`}
+                          className={`olap-ops-step-line ${i < currentStep ? "done" : ""}`}
                           style={
                             i < currentStep
                               ? { background: activeOpDef.color }
@@ -2468,8 +2516,6 @@ const OlapCube: React.FC = () => {
                     </React.Fragment>
                   ))}
                 </div>
-
-                {/* Step label & description */}
                 <div className="olap-ops-step-info">
                   <div
                     className="olap-ops-step-label"
@@ -2482,8 +2528,6 @@ const OlapCube: React.FC = () => {
                     {activeOpDef.steps[currentStep].description}
                   </p>
                 </div>
-
-                {/* Controls */}
                 <div className="olap-ops-controls">
                   <button
                     className="olap-ops-ctrl-btn"
@@ -2510,8 +2554,6 @@ const OlapCube: React.FC = () => {
                     Next ▶
                   </button>
                 </div>
-
-                {/* Progress bar */}
                 <div className="olap-ops-progress-track">
                   <div
                     className="olap-ops-progress-fill"
@@ -2554,15 +2596,15 @@ const OlapCube: React.FC = () => {
                     <tr>
                       <th className="olap-th-idx">#</th>
                       <th style={{ color: AXIS_COLORS.x.css }}>
-                        {getDimensionById(axes.x)!.name}
+                        {dimDisplayNames.x}
                         <span className="olap-th-axis">X</span>
                       </th>
                       <th style={{ color: AXIS_COLORS.y.css }}>
-                        {getDimensionById(axes.y)!.name}
+                        {dimDisplayNames.y}
                         <span className="olap-th-axis">Y</span>
                       </th>
                       <th style={{ color: AXIS_COLORS.z.css }}>
-                        {getDimensionById(axes.z)!.name}
+                        {dimDisplayNames.z}
                         <span className="olap-th-axis">Z</span>
                       </th>
                       <th className="olap-th-value">Value</th>
@@ -2609,10 +2651,7 @@ const OlapCube: React.FC = () => {
                             <div className="olap-bar-track">
                               <div
                                 className="olap-bar-fill"
-                                style={{
-                                  width: `${bw}%`,
-                                  backgroundColor: bc,
-                                }}
+                                style={{ width: `${bw}%`, backgroundColor: bc }}
                               />
                             </div>
                           </td>
@@ -2627,7 +2666,7 @@ const OlapCube: React.FC = () => {
 
           <div className="olap-instructions">
             {activeOp
-              ? "Operation in progress · Rotate the cube to observe the animation"
+              ? "Operation in progress · Rotate the cube to observe"
               : "Drag to rotate · Scroll to zoom · Click a cell or row to inspect"}
           </div>
         </div>
@@ -2668,19 +2707,19 @@ const OlapCube: React.FC = () => {
             <tbody>
               <tr>
                 <td style={{ color: AXIS_COLORS.x.css }}>
-                  {selCell.xDimension}
+                  {dimDisplayNames.x}
                 </td>
                 <td>{selCell.xMember}</td>
               </tr>
               <tr>
                 <td style={{ color: AXIS_COLORS.y.css }}>
-                  {selCell.yDimension}
+                  {dimDisplayNames.y}
                 </td>
                 <td>{selCell.yMember}</td>
               </tr>
               <tr>
                 <td style={{ color: AXIS_COLORS.z.css }}>
-                  {selCell.zDimension}
+                  {dimDisplayNames.z}
                 </td>
                 <td>{selCell.zMember}</td>
               </tr>

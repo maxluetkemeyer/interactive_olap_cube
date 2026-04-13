@@ -117,3 +117,30 @@ export function generateCellValue(members: string[]): number {
 export function getDimensionById(id: string): Dimension | undefined {
   return DIMENSIONS.find((d) => d.id === id);
 }
+
+/**
+ * Finds which hierarchy level the dimension's current members correspond to.
+ * Returns the level name or null if no match / no hierarchy.
+ */
+export function findCurrentLevel(dim: Dimension): string | null {
+  if (!dim.hierarchy || dim.hierarchy.length === 0) return null;
+  for (const level of dim.hierarchy) {
+    if (
+      dim.members.length === level.members.length &&
+      dim.members.every((m) => level.members.includes(m))
+    ) {
+      return level.levelName;
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns the display name including the hierarchy level in parentheses.
+ * e.g. "Time Period (Quarter)", "Product (Subcategory)"
+ */
+export function getDimensionDisplayName(dim: Dimension): string {
+  const level = findCurrentLevel(dim);
+  if (level) return `${dim.name} (${level})`;
+  return dim.name;
+}
