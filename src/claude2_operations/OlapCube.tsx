@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-expressions */
 import React, {
   useRef,
   useEffect,
@@ -12,35 +14,33 @@ import {
   DIMENSIONS,
   generateCellValue,
   getDimensionById,
+  getDimensionAtLevel,
   getDimensionDisplayName,
-  findCurrentLevel,
+  getDefaultLevelIndex,
 } from "./data";
 import { CONCEPTS, getConceptById } from "./concepts";
 import { OPERATIONS, getOperationById } from "./operations";
 import "./OlapCube.css";
 
 /* ================================================================== */
-/*  Constants                                                          */
-/* ================================================================== */
 const CELL_SIZE = 0.8;
 const CELL_GAP = 0.4;
 const CELL_STRIDE = CELL_SIZE + CELL_GAP;
-const AXIS_COLORS: Record<string, { hex: number; css: string }> = {
+const AX: Record<string, { hex: number; css: string }> = {
   x: { hex: 0xc92a2a, css: "#c92a2a" },
   y: { hex: 0x2b8a3e, css: "#2b8a3e" },
   z: { hex: 0x1864ab, css: "#1864ab" },
 };
-const GREY_COLOR = 0xcccccc;
-const GREY_OPACITY = 0.15;
+const GREY_HEX = 0xcccccc;
+const GREY_OP = 0.15;
 
 /* ================================================================== */
-/*  Helpers                                                            */
+/*  tiny helpers                                                       */
 /* ================================================================== */
-function easeInOutCubic(t: number): number {
+function ease(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
-
-function valueToColor(v: number, mn: number, mx: number): THREE.Color {
+function v2c(v: number, mn: number, mx: number): THREE.Color {
   const t = mx > mn ? (v - mn) / (mx - mn) : 0.5;
   const s: [number, number, number][] = [
     [0.25, 0.55, 0.83],
@@ -49,61 +49,55 @@ function valueToColor(v: number, mn: number, mx: number): THREE.Color {
     [0.9, 0.72, 0.22],
     [0.85, 0.28, 0.22],
   ];
-  const i = t * (s.length - 1);
-  const lo = Math.max(0, Math.floor(i));
-  const hi = Math.min(s.length - 1, lo + 1);
-  const f = i - lo;
+  const i = t * (s.length - 1),
+    lo = Math.max(0, Math.floor(i)),
+    hi = Math.min(s.length - 1, lo + 1),
+    f = i - lo;
   return new THREE.Color(
     s[lo][0] + (s[hi][0] - s[lo][0]) * f,
     s[lo][1] + (s[hi][1] - s[lo][1]) * f,
     s[lo][2] + (s[hi][2] - s[lo][2]) * f,
   );
 }
-
-function makeTextSprite(
+function txtSp(
   text: string,
-  opts: { color?: string; size?: number; bold?: boolean; scale?: number } = {},
-): THREE.Sprite {
-  const { color = "#333", size = 40, bold = false, scale = 1 } = opts;
-  const c = document.createElement("canvas");
-  const x = c.getContext("2d")!;
-  const font = `${bold ? "bold " : ""}${size}px "Segoe UI",Arial,sans-serif`;
-  x.font = font;
-  const w = x.measureText(text).width;
-  const p = 14;
+  o: { color?: string; size?: number; bold?: boolean; scale?: number } = {},
+) {
+  const { color = "#333", size = 40, bold = false, scale = 1 } = o;
+  const c = document.createElement("canvas"),
+    x = c.getContext("2d")!;
+  const fn = `${bold ? "bold " : ""}${size}px "Segoe UI",Arial,sans-serif`;
+  x.font = fn;
+  const w = x.measureText(text).width,
+    p = 14;
   c.width = Math.ceil(w) + p * 2;
   c.height = Math.ceil(size * 1.35) + p * 2;
-  x.font = font;
+  x.font = fn;
   x.fillStyle = color;
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillText(text, c.width / 2, c.height / 2);
-  const tex = new THREE.CanvasTexture(c);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({
-    map: tex,
+  const tx = new THREE.CanvasTexture(c);
+  tx.minFilter = THREE.LinearFilter;
+  const mt = new THREE.SpriteMaterial({
+    map: tx,
     transparent: true,
     depthTest: false,
     depthWrite: false,
   });
-  const sp = new THREE.Sprite(mat);
+  const sp = new THREE.Sprite(mt);
   sp.scale.set((c.width / c.height) * scale, scale, 1);
   return sp;
 }
-
-function makeBadgeSprite(
-  text: string,
-  bg: string,
-  opts: { scale?: number } = {},
-): THREE.Sprite {
-  const { scale = 1 } = opts;
-  const c = document.createElement("canvas");
-  const x = c.getContext("2d")!;
+function badgeSp(text: string, bg: string, o: { scale?: number } = {}) {
+  const { scale = 1 } = o;
+  const c = document.createElement("canvas"),
+    x = c.getContext("2d")!;
   const fs = 32;
   x.font = `bold ${fs}px "Segoe UI",Arial,sans-serif`;
-  const tw = x.measureText(text).width;
-  const px = 24;
-  const py = 14;
+  const tw = x.measureText(text).width,
+    px = 24,
+    py = 14;
   c.width = Math.ceil(tw) + px * 2;
   c.height = Math.ceil(fs * 1.4) + py * 2;
   x.fillStyle = bg;
@@ -115,20 +109,19 @@ function makeBadgeSprite(
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillText(text, c.width / 2, c.height / 2);
-  const tex = new THREE.CanvasTexture(c);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({
-    map: tex,
+  const tx = new THREE.CanvasTexture(c);
+  tx.minFilter = THREE.LinearFilter;
+  const mt = new THREE.SpriteMaterial({
+    map: tx,
     transparent: true,
     depthTest: false,
     depthWrite: false,
   });
-  const sp = new THREE.Sprite(mat);
+  const sp = new THREE.Sprite(mt);
   sp.scale.set((c.width / c.height) * scale, scale, 1);
   return sp;
 }
-
-function makeValueLabel(v: number, fc: string): THREE.CanvasTexture {
+function valTex(v: number, fc: string) {
   const c = document.createElement("canvas");
   c.width = 128;
   c.height = 128;
@@ -139,16 +132,11 @@ function makeValueLabel(v: number, fc: string): THREE.CanvasTexture {
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillText(String(v), 64, 64);
-  const tex = new THREE.CanvasTexture(c);
-  tex.minFilter = THREE.LinearFilter;
-  return tex;
+  const tx = new THREE.CanvasTexture(c);
+  tx.minFilter = THREE.LinearFilter;
+  return tx;
 }
-
-function makeDashedLine(
-  a: THREE.Vector3,
-  b: THREE.Vector3,
-  col: number,
-): THREE.Line {
+function dashLn(a: THREE.Vector3, b: THREE.Vector3, col: number) {
   const g = new THREE.BufferGeometry().setFromPoints([a, b]);
   const m = new THREE.LineDashedMaterial({
     color: col,
@@ -161,24 +149,14 @@ function makeDashedLine(
   l.computeLineDistances();
   return l;
 }
-
-function makeSolidLine(
-  a: THREE.Vector3,
-  b: THREE.Vector3,
-  col: number,
-  op = 0.7,
-): THREE.Line {
-  const g = new THREE.BufferGeometry().setFromPoints([a, b]);
-  const m = new THREE.LineBasicMaterial({
-    color: col,
-    transparent: true,
-    opacity: op,
-  });
-  return new THREE.Line(g, m);
+function solidLn(a: THREE.Vector3, b: THREE.Vector3, col: number, op = 0.7) {
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([a, b]),
+    new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: op }),
+  );
 }
-
-function disposeGroup(group: THREE.Group) {
-  group.traverse((o) => {
+function dispGrp(g: THREE.Group) {
+  g.traverse((o) => {
     if (
       o instanceof THREE.Mesh ||
       o instanceof THREE.LineSegments ||
@@ -188,7 +166,6 @@ function disposeGroup(group: THREE.Group) {
       const m = o.material;
       if (Array.isArray(m)) m.forEach((x) => x.dispose());
       else if (m) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ("map" in m && (m as any).map) (m as any).map.dispose();
         m.dispose();
       }
@@ -197,186 +174,189 @@ function disposeGroup(group: THREE.Group) {
       o.material.dispose();
     }
   });
-  group.clear();
+  g.clear();
 }
-
-function cellKey(c: CellInfo) {
+function ck(c: CellInfo) {
   return `${c.xIndex}-${c.yIndex}-${c.zIndex}`;
 }
 
 /* ================================================================== */
-/*  Animation types                                                    */
-/* ================================================================== */
-interface CellAnimTarget {
+interface CellAT {
   startPos: THREE.Vector3;
   endPos: THREE.Vector3;
   startScale: number;
   endScale: number;
-  startOpacity: number;
-  endOpacity: number;
-  startColor?: THREE.Color;
-  endColor?: THREE.Color;
+  startOp: number;
+  endOp: number;
+  startCol?: THREE.Color;
+  endCol?: THREE.Color;
 }
-
-interface OrigState {
+interface OrigS {
   pos: THREE.Vector3;
   scale: number;
-  opacity: number;
-  color: THREE.Color;
+  op: number;
+  col: THREE.Color;
 }
-
-interface AnimState {
+interface AnimS {
   opId: string;
   step: number;
-  startTime: number;
-  duration: number;
-  targets: Map<string, CellAnimTarget>;
-  originalStates: Map<string, OrigState>;
-  tempMeshes: THREE.Mesh[];
-  tempMeshMap: Map<string, THREE.Mesh>;
-  sceneLabels: THREE.Object3D[];
+  start: number;
+  dur: number;
+  tgts: Map<string, CellAT>;
+  orig: Map<string, OrigS>;
+  tmpM: THREE.Mesh[];
+  tmpMap: Map<string, THREE.Mesh>;
+  lbls: THREE.Object3D[];
 }
 
-function captureTargets(
-  meshMap: Map<string, THREE.Mesh>,
-  tempMeshMap: Map<string, THREE.Mesh>,
-  endStates: Map<string, Partial<CellAnimTarget>>,
-): Map<string, CellAnimTarget> {
-  const r = new Map<string, CellAnimTarget>();
-  for (const [key, end] of endStates) {
-    const mesh = key.startsWith("temp-")
-      ? tempMeshMap.get(key)
-      : meshMap.get(key);
-    if (!mesh) continue;
-    const mat = mesh.material as THREE.MeshPhongMaterial;
-    r.set(key, {
-      startPos: mesh.position.clone(),
-      endPos: end.endPos ?? mesh.position.clone(),
-      startScale: mesh.scale.x,
-      endScale: end.endScale ?? mesh.scale.x,
-      startOpacity: mat.opacity,
-      endOpacity: end.endOpacity ?? mat.opacity,
-      startColor: end.endColor ? mat.color.clone() : undefined,
-      endColor: end.endColor,
+function capTgts(
+  mm: Map<string, THREE.Mesh>,
+  tm: Map<string, THREE.Mesh>,
+  es: Map<string, Partial<CellAT>>,
+) {
+  const r = new Map<string, CellAT>();
+  for (const [k, e] of es) {
+    const m = k.startsWith("temp-") ? tm.get(k) : mm.get(k);
+    if (!m) continue;
+    const mt = m.material as THREE.MeshPhongMaterial;
+    r.set(k, {
+      startPos: m.position.clone(),
+      endPos: e.endPos ?? m.position.clone(),
+      startScale: m.scale.x,
+      endScale: e.endScale ?? m.scale.x,
+      startOp: mt.opacity,
+      endOp: e.endOp ?? mt.opacity,
+      startCol: e.endCol ? mt.color.clone() : undefined,
+      endCol: e.endCol,
     });
   }
   return r;
 }
-
-function applyProgress(
-  meshMap: Map<string, THREE.Mesh>,
-  tempMeshMap: Map<string, THREE.Mesh>,
-  targets: Map<string, CellAnimTarget>,
+function applyProg(
+  mm: Map<string, THREE.Mesh>,
+  tm: Map<string, THREE.Mesh>,
+  tgts: Map<string, CellAT>,
   t: number,
 ) {
-  for (const [key, tgt] of targets) {
-    const mesh = key.startsWith("temp-")
-      ? tempMeshMap.get(key)
-      : meshMap.get(key);
-    if (!mesh) continue;
-    mesh.position.lerpVectors(tgt.startPos, tgt.endPos, t);
-    mesh.scale.setScalar(THREE.MathUtils.lerp(tgt.startScale, tgt.endScale, t));
-    const mat = mesh.material as THREE.MeshPhongMaterial;
-    mat.opacity = THREE.MathUtils.lerp(tgt.startOpacity, tgt.endOpacity, t);
-    if (tgt.startColor && tgt.endColor)
-      mat.color.copy(tgt.startColor).lerp(tgt.endColor, t);
+  for (const [k, tg] of tgts) {
+    const m = k.startsWith("temp-") ? tm.get(k) : mm.get(k);
+    if (!m) continue;
+    m.position.lerpVectors(tg.startPos, tg.endPos, t);
+    m.scale.setScalar(THREE.MathUtils.lerp(tg.startScale, tg.endScale, t));
+    const mt = m.material as THREE.MeshPhongMaterial;
+    mt.opacity = THREE.MathUtils.lerp(tg.startOp, tg.endOp, t);
+    if (tg.startCol && tg.endCol) mt.color.copy(tg.startCol).lerp(tg.endCol, t);
   }
 }
 
 /* ================================================================== */
-/*  Scene context                                                      */
-/* ================================================================== */
-interface CubeMetrics {
+interface CM {
   xN: number;
   yN: number;
   zN: number;
-  xOff: number;
-  yOff: number;
-  zOff: number;
-  xDimName: string;
-  yDimName: string;
-  zDimName: string;
-  xDimDisplay: string;
-  yDimDisplay: string;
-  zDimDisplay: string;
-  xDimId: string;
-  yDimId: string;
-  zDimId: string;
+  xO: number;
+  yO: number;
+  zO: number;
+  xName: string;
+  yName: string;
+  zName: string;
+  xDisp: string;
+  yDisp: string;
+  zDisp: string;
+  xId: string;
+  yId: string;
+  zId: string;
+  xLvl: number;
+  yLvl: number;
+  zLvl: number;
   mn: number;
   mx: number;
 }
-
-interface SceneCtx {
+interface Ctx {
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-  renderer: THREE.WebGLRenderer;
-  controls: OrbitControls;
-  raycaster: THREE.Raycaster;
-  mouse: THREE.Vector2;
-  cubeGroup: THREE.Group;
-  labelGroup: THREE.Group;
-  axisGroup: THREE.Group;
-  conceptGroup: THREE.Group;
-  opGroup: THREE.Group;
-  hoveredMesh: THREE.Mesh | null;
-  selectedMesh: THREE.Mesh | null;
-  animId: number;
-  buildTime: number;
-  cubeMetrics: CubeMetrics | null;
-  meshMap: Map<string, THREE.Mesh>;
+  cam: THREE.PerspectiveCamera;
+  rdr: THREE.WebGLRenderer;
+  ctrl: OrbitControls;
+  rc: THREE.Raycaster;
+  ms: THREE.Vector2;
+  cubeG: THREE.Group;
+  lblG: THREE.Group;
+  axG: THREE.Group;
+  conG: THREE.Group;
+  opG: THREE.Group;
+  hovM: THREE.Mesh | null;
+  selM: THREE.Mesh | null;
+  aId: number;
+  bT: number;
+  cm: CM | null;
+  mm: Map<string, THREE.Mesh>;
 }
 
 /* ================================================================== */
-/*  COMPONENT                                                          */
-/* ================================================================== */
 const OlapCube: React.FC = () => {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<SceneCtx | null>(null);
-  const mouseDownPos = useRef<{ x: number; y: number } | null>(null);
-  const tableRowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
-  const animRef = useRef<AnimState | null>(null);
-  const animRafRef = useRef(0);
+  const cvRef = useRef<HTMLDivElement>(null);
+  const sRef = useRef<Ctx | null>(null);
+  const mdRef = useRef<{ x: number; y: number } | null>(null);
+  const trRef = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const anRef = useRef<AnimS | null>(null);
+  const arRef = useRef(0);
 
   const [axes, setAxes] = useState<AxisAssignment>({
     x: "product",
     y: "region",
     z: "time",
   });
+  const [levelOverrides, setLevelOverrides] = useState<Record<string, number>>(
+    {},
+  );
   const [selCell, setSelCell] = useState<CellInfo | null>(null);
   const [hoverCell, setHoverCell] = useState<CellInfo | null>(null);
   const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
   const [conceptMode, setConceptMode] = useState(false);
-  const [activeConcepts, setActiveConcepts] = useState<Set<ConceptId>>(
-    new Set(),
-  );
-  const [expandedConcept, setExpandedConcept] = useState<ConceptId | null>(
-    null,
-  );
-  const [tableCollapsed, setTableCollapsed] = useState(false);
-  const [activeOp, setActiveOp] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [actCon, setActCon] = useState<Set<ConceptId>>(new Set());
+  const [expCon, setExpCon] = useState<ConceptId | null>(null);
+  const [tblCol, setTblCol] = useState(false);
+  const [actOp, setActOp] = useState<string | null>(null);
+  const [curStep, setCurStep] = useState(0);
   const [stepDone, setStepDone] = useState(false);
-  const [autoPlay, setAutoPlay] = useState(true);
+  const [autoPlay, setAutoPlay] = useState(false);
 
-  const anyConcept = activeConcepts.size > 0;
+  const anyCon = actCon.size > 0;
 
-  /* dimension display names for the current axes */
-  const dimDisplayNames = useMemo(
-    () => ({
-      x: getDimensionDisplayName(getDimensionById(axes.x)!),
-      y: getDimensionDisplayName(getDimensionById(axes.y)!),
-      z: getDimensionDisplayName(getDimensionById(axes.z)!),
-    }),
-    [axes],
+  /* ---- effective level for a dimension ---- */
+  const effLvl = useCallback(
+    (dimId: string) => {
+      if (dimId in levelOverrides) return levelOverrides[dimId];
+      const dim = getDimensionById(dimId)!;
+      return getDefaultLevelIndex(dim);
+    },
+    [levelOverrides],
   );
 
-  /* ================================================================ */
-  /*  Cell data                                                        */
-  /* ================================================================ */
+  /* ---- effective dimensions (with members for the active level) ---- */
+  const effDims = useMemo(
+    () => ({
+      x: getDimensionAtLevel(axes.x, effLvl(axes.x)),
+      y: getDimensionAtLevel(axes.y, effLvl(axes.y)),
+      z: getDimensionAtLevel(axes.z, effLvl(axes.z)),
+    }),
+    [axes, effLvl],
+  );
+
+  const dimDisp = useMemo(
+    () => ({
+      x: getDimensionDisplayName(getDimensionById(axes.x)!, effLvl(axes.x)),
+      y: getDimensionDisplayName(getDimensionById(axes.y)!, effLvl(axes.y)),
+      z: getDimensionDisplayName(getDimensionById(axes.z)!, effLvl(axes.z)),
+    }),
+    [axes, effLvl],
+  );
+
+  /* ---- all cells ---- */
   const allCells: CellInfo[] = useMemo(() => {
-    const xd = getDimensionById(axes.x)!;
-    const yd = getDimensionById(axes.y)!;
-    const zd = getDimensionById(axes.z)!;
+    const xd = effDims.x,
+      yd = effDims.y,
+      zd = effDims.z;
     const cells: CellInfo[] = [];
     for (let xi = 0; xi < xd.members.length; xi++)
       for (let yi = 0; yi < yd.members.length; yi++)
@@ -398,30 +378,28 @@ const OlapCube: React.FC = () => {
             ]),
           });
     return cells;
-  }, [axes]);
+  }, [effDims]);
 
-  /* ================================================================ */
-  /*  Select cell helper                                               */
-  /* ================================================================ */
-  const selectCellByInfo = useCallback((cell: CellInfo | null) => {
-    const ctx = sceneRef.current;
-    if (!ctx) return;
-    if (ctx.selectedMesh) {
-      const o = ctx.selectedMesh.getObjectByName("sel-outline");
+  /* ---- select cell ---- */
+  const selectCell = useCallback((cell: CellInfo | null) => {
+    const s = sRef.current;
+    if (!s) return;
+    if (s.selM) {
+      const o = s.selM.getObjectByName("sel-out");
       if (o) {
-        ctx.selectedMesh.remove(o);
+        s.selM.remove(o);
         (o as THREE.LineSegments).geometry.dispose();
         ((o as THREE.LineSegments).material as THREE.Material).dispose();
       }
-      ctx.selectedMesh = null;
+      s.selM = null;
     }
     if (!cell) {
       setSelCell(null);
       return;
     }
-    const mesh = ctx.meshMap.get(cellKey(cell));
-    if (mesh) {
-      ctx.selectedMesh = mesh;
+    const m = s.mm.get(ck(cell));
+    if (m) {
+      s.selM = m;
       const oG = new THREE.EdgesGeometry(
         new THREE.BoxGeometry(
           CELL_SIZE * 1.12,
@@ -431,110 +409,107 @@ const OlapCube: React.FC = () => {
       );
       const oM = new THREE.LineBasicMaterial({ color: 0x222222 });
       const out = new THREE.LineSegments(oG, oM);
-      out.name = "sel-outline";
-      mesh.add(out);
+      out.name = "sel-out";
+      m.add(out);
     }
     setSelCell(cell);
   }, []);
 
   useEffect(() => {
     if (!selCell) return;
-    const row = tableRowRefs.current.get(cellKey(selCell));
-    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+    const r = trRef.current.get(ck(selCell));
+    if (r) r.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [selCell]);
 
   /* ================================================================ */
   /*  Init Three.js                                                    */
   /* ================================================================ */
   useEffect(() => {
-    const el = canvasRef.current;
+    const el = cvRef.current;
     if (!el) return;
-    const w = el.clientWidth;
-    const h = el.clientHeight;
+    const w = el.clientWidth,
+      h = el.clientHeight;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xffffff);
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
-    camera.position.set(10, 8, 10);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(w, h);
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    el.appendChild(renderer.domElement);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.rotateSpeed = 0.5;
-    controls.minDistance = 5;
-    controls.maxDistance = 30;
+    const cam = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+    cam.position.set(10, 8, 10);
+    const rdr = new THREE.WebGLRenderer({ antialias: true });
+    rdr.setSize(w, h);
+    rdr.setPixelRatio(Math.min(devicePixelRatio, 2));
+    rdr.outputColorSpace = THREE.SRGBColorSpace;
+    el.appendChild(rdr.domElement);
+    const ctrl = new OrbitControls(cam, rdr.domElement);
+    ctrl.enableDamping = true;
+    ctrl.dampingFactor = 0.08;
+    ctrl.rotateSpeed = 0.5;
+    ctrl.minDistance = 5;
+    ctrl.maxDistance = 30;
     scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    const dl1 = new THREE.DirectionalLight(0xffffff, 0.6);
-    dl1.position.set(8, 12, 8);
-    scene.add(dl1);
-    const dl2 = new THREE.DirectionalLight(0xccccff, 0.2);
-    dl2.position.set(-6, 4, -6);
-    scene.add(dl2);
-    const cubeGroup = new THREE.Group();
-    const labelGroup = new THREE.Group();
-    const axisGroup = new THREE.Group();
-    const conceptGroup = new THREE.Group();
-    const opGroup = new THREE.Group();
-    scene.add(cubeGroup, labelGroup, axisGroup, conceptGroup, opGroup);
-
-    const ctx: SceneCtx = {
+    const d1 = new THREE.DirectionalLight(0xffffff, 0.6);
+    d1.position.set(8, 12, 8);
+    scene.add(d1);
+    const d2 = new THREE.DirectionalLight(0xccccff, 0.2);
+    d2.position.set(-6, 4, -6);
+    scene.add(d2);
+    const cubeG = new THREE.Group(),
+      lblG = new THREE.Group(),
+      axG = new THREE.Group(),
+      conG = new THREE.Group(),
+      opG = new THREE.Group();
+    scene.add(cubeG, lblG, axG, conG, opG);
+    const ctx: Ctx = {
       scene,
-      camera,
-      renderer,
-      controls,
-      raycaster: new THREE.Raycaster(),
-      mouse: new THREE.Vector2(-999, -999),
-      cubeGroup,
-      labelGroup,
-      axisGroup,
-      conceptGroup,
-      opGroup,
-      hoveredMesh: null,
-      selectedMesh: null,
-      animId: 0,
-      buildTime: 0,
-      cubeMetrics: null,
-      meshMap: new Map(),
+      cam,
+      rdr,
+      ctrl,
+      rc: new THREE.Raycaster(),
+      ms: new THREE.Vector2(-999, -999),
+      cubeG,
+      lblG,
+      axG,
+      conG,
+      opG,
+      hovM: null,
+      selM: null,
+      aId: 0,
+      bT: 0,
+      cm: null,
+      mm: new Map(),
     };
-    sceneRef.current = ctx;
-
-    const animate = () => {
-      ctx.animId = requestAnimationFrame(animate);
-      controls.update();
-      const elapsed = performance.now() - ctx.buildTime;
-      let idx = 0;
-      cubeGroup.children.forEach((c) => {
+    sRef.current = ctx;
+    const anim = () => {
+      ctx.aId = requestAnimationFrame(anim);
+      ctrl.update();
+      const el2 = performance.now() - ctx.bT;
+      let i = 0;
+      cubeG.children.forEach((c) => {
         if (c instanceof THREE.Mesh && c.userData.cellInfo) {
           if (!c.userData.entryDone) {
-            const t = Math.min(1, Math.max(0, (elapsed - idx * 25) / 400));
+            const t = Math.min(1, Math.max(0, (el2 - i * 25) / 400));
             if (t >= 1) c.userData.entryDone = true;
             else c.scale.setScalar(1 - Math.pow(1 - t, 3));
           }
-          idx++;
+          i++;
         }
       });
-      renderer.render(scene, camera);
+      rdr.render(scene, cam);
     };
-    animate();
-
+    anim();
     const ro = new ResizeObserver(() => {
-      const ww = el.clientWidth;
-      const hh = el.clientHeight;
-      if (ww === 0 || hh === 0) return;
-      camera.aspect = ww / hh;
-      camera.updateProjectionMatrix();
-      renderer.setSize(ww, hh);
+      const ww = el.clientWidth,
+        hh = el.clientHeight;
+      if (!ww || !hh) return;
+      cam.aspect = ww / hh;
+      cam.updateProjectionMatrix();
+      rdr.setSize(ww, hh);
     });
     ro.observe(el);
     return () => {
-      cancelAnimationFrame(ctx.animId);
+      cancelAnimationFrame(ctx.aId);
       ro.disconnect();
-      controls.dispose();
-      renderer.dispose();
-      if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+      ctrl.dispose();
+      rdr.dispose();
+      if (el.contains(rdr.domElement)) el.removeChild(rdr.domElement);
     };
   }, []);
 
@@ -542,44 +517,46 @@ const OlapCube: React.FC = () => {
   /*  Build cube                                                       */
   /* ================================================================ */
   useEffect(() => {
-    const ctx = sceneRef.current;
-    if (!ctx) return;
-    disposeGroup(ctx.cubeGroup);
-    disposeGroup(ctx.labelGroup);
-    disposeGroup(ctx.axisGroup);
-    disposeGroup(ctx.conceptGroup);
-    disposeGroup(ctx.opGroup);
-    ctx.meshMap.clear();
+    const s = sRef.current;
+    if (!s) return;
+    dispGrp(s.cubeG);
+    dispGrp(s.lblG);
+    dispGrp(s.axG);
+    dispGrp(s.conG);
+    dispGrp(s.opG);
+    s.mm.clear();
+    const xd = effDims.x,
+      yd = effDims.y,
+      zd = effDims.z;
+    const xN = xd.members.length,
+      yN = yd.members.length,
+      zN = zd.members.length;
+    const xO = (-(xN - 1) * CELL_STRIDE) / 2,
+      yO = (-(yN - 1) * CELL_STRIDE) / 2,
+      zO = (-(zN - 1) * CELL_STRIDE) / 2;
+    const vs = allCells.map((c) => c.value),
+      mn = Math.min(...vs),
+      mx = Math.max(...vs);
 
-    const xd = getDimensionById(axes.x)!;
-    const yd = getDimensionById(axes.y)!;
-    const zd = getDimensionById(axes.z)!;
-    const xN = xd.members.length;
-    const yN = yd.members.length;
-    const zN = zd.members.length;
-    const xO = (-(xN - 1) * CELL_STRIDE) / 2;
-    const yO = (-(yN - 1) * CELL_STRIDE) / 2;
-    const zO = (-(zN - 1) * CELL_STRIDE) / 2;
-    const vals = allCells.map((c) => c.value);
-    const mn = Math.min(...vals);
-    const mx = Math.max(...vals);
-
-    ctx.cubeMetrics = {
+    s.cm = {
       xN,
       yN,
       zN,
-      xOff: xO,
-      yOff: yO,
-      zOff: zO,
-      xDimName: xd.name,
-      yDimName: yd.name,
-      zDimName: zd.name,
-      xDimDisplay: getDimensionDisplayName(xd),
-      yDimDisplay: getDimensionDisplayName(yd),
-      zDimDisplay: getDimensionDisplayName(zd),
-      xDimId: xd.id,
-      yDimId: yd.id,
-      zDimId: zd.id,
+      xO,
+      yO,
+      zO,
+      xName: xd.name,
+      yName: yd.name,
+      zName: zd.name,
+      xDisp: dimDisp.x,
+      yDisp: dimDisp.y,
+      zDisp: dimDisp.z,
+      xId: xd.id,
+      yId: yd.id,
+      zId: zd.id,
+      xLvl: effLvl(axes.x),
+      yLvl: effLvl(axes.y),
+      zLvl: effLvl(axes.z),
       mn,
       mx,
     };
@@ -594,7 +571,7 @@ const OlapCube: React.FC = () => {
     const vpG = new THREE.PlaneGeometry(CELL_SIZE * 0.85, CELL_SIZE * 0.85);
 
     allCells.forEach((cell) => {
-      const col = valueToColor(cell.value, mn, mx);
+      const col = v2c(cell.value, mn, mx);
       const mat = new THREE.MeshPhongMaterial({
         color: col,
         transparent: true,
@@ -612,223 +589,201 @@ const OlapCube: React.FC = () => {
       mesh.userData = { cellInfo: cell, originalColor: col.clone() };
       mesh.scale.setScalar(0);
       mesh.add(new THREE.LineSegments(eG, eM));
-
-      const lum = col.r * 0.299 + col.g * 0.587 + col.b * 0.114;
-      const tc = lum > 0.52 ? "#1a1a1a" : "#ffffff";
-      const addFL = (p: THREE.Vector3, rot: THREE.Euler | null) => {
-        const tex = makeValueLabel(cell.value, tc);
+      const lum = col.r * 0.299 + col.g * 0.587 + col.b * 0.114,
+        tc = lum > 0.52 ? "#1a1a1a" : "#fff";
+      const aFL = (p: THREE.Vector3, r: THREE.Euler | null) => {
+        const tx = valTex(cell.value, tc);
         const pm = new THREE.MeshBasicMaterial({
-          map: tex,
+          map: tx,
           transparent: true,
           side: THREE.DoubleSide,
         });
         const pl = new THREE.Mesh(vpG, pm);
         pl.position.copy(p);
-        if (rot) pl.rotation.copy(rot);
+        if (r) pl.rotation.copy(r);
         mesh.add(pl);
       };
       if (cell.xIndex === xN - 1)
-        addFL(
+        aFL(
           new THREE.Vector3(CELL_SIZE / 2 + 0.005, 0, 0),
           new THREE.Euler(0, Math.PI / 2, 0),
         );
       if (cell.zIndex === zN - 1)
-        addFL(new THREE.Vector3(0, 0, CELL_SIZE / 2 + 0.005), null);
+        aFL(new THREE.Vector3(0, 0, CELL_SIZE / 2 + 0.005), null);
       if (cell.yIndex === yN - 1)
-        addFL(
+        aFL(
           new THREE.Vector3(0, CELL_SIZE / 2 + 0.005, 0),
           new THREE.Euler(-Math.PI / 2, 0, 0),
         );
       if (cell.xIndex === 0)
-        addFL(
+        aFL(
           new THREE.Vector3(-CELL_SIZE / 2 - 0.005, 0, 0),
           new THREE.Euler(0, -Math.PI / 2, 0),
         );
       if (cell.zIndex === 0)
-        addFL(
+        aFL(
           new THREE.Vector3(0, 0, -CELL_SIZE / 2 - 0.005),
           new THREE.Euler(0, Math.PI, 0),
         );
       if (cell.yIndex === 0)
-        addFL(
+        aFL(
           new THREE.Vector3(0, -CELL_SIZE / 2 - 0.005, 0),
           new THREE.Euler(Math.PI / 2, 0, 0),
         );
-
-      ctx.cubeGroup.add(mesh);
-      ctx.meshMap.set(cellKey(cell), mesh);
+      s.cubeG.add(mesh);
+      s.mm.set(ck(cell), mesh);
     });
 
-    /* ---- member labels ---- */
-    const lbM = CELL_STRIDE * 0.88;
+    const lM = CELL_STRIDE * 0.88;
+    const lblScale = (n: number) => (n > 6 ? 0.35 : n > 4 ? 0.42 : 0.5);
     xd.members.forEach((m, i) => {
-      const s = makeTextSprite(m, {
-        color: AXIS_COLORS.x.css,
-        size: 30,
-        scale: 0.5,
-      });
-      s.position.set(i * CELL_STRIDE + xO, yO - lbM, zO - lbM);
-      s.userData = { conceptTag: "members" };
-      ctx.labelGroup.add(s);
+      const sp = txtSp(m, { color: AX.x.css, size: 30, scale: lblScale(xN) });
+      sp.position.set(i * CELL_STRIDE + xO, yO - lM, zO - lM);
+      sp.userData = { conceptTag: "members" };
+      s.lblG.add(sp);
     });
     yd.members.forEach((m, i) => {
-      const s = makeTextSprite(m, {
-        color: AXIS_COLORS.y.css,
-        size: 30,
-        scale: 0.5,
-      });
-      s.position.set(xO - lbM, i * CELL_STRIDE + yO, zO - lbM);
-      s.userData = { conceptTag: "members" };
-      ctx.labelGroup.add(s);
+      const sp = txtSp(m, { color: AX.y.css, size: 30, scale: lblScale(yN) });
+      sp.position.set(xO - lM, i * CELL_STRIDE + yO, zO - lM);
+      sp.userData = { conceptTag: "members" };
+      s.lblG.add(sp);
     });
     zd.members.forEach((m, i) => {
-      const s = makeTextSprite(m, {
-        color: AXIS_COLORS.z.css,
-        size: 30,
-        scale: 0.5,
-      });
-      s.position.set(xO - lbM, yO - lbM, i * CELL_STRIDE + zO);
-      s.userData = { conceptTag: "members" };
-      ctx.labelGroup.add(s);
+      const sp = txtSp(m, { color: AX.z.css, size: 30, scale: lblScale(zN) });
+      sp.position.set(xO - lM, yO - lM, i * CELL_STRIDE + zO);
+      sp.userData = { conceptTag: "members" };
+      s.lblG.add(sp);
     });
 
-    /* ---- dimension name labels (with hierarchy level) ---- */
     const nO = CELL_STRIDE * 1.4;
-    const dimLabelData: {
-      dim: typeof xd;
-      axis: "x" | "y" | "z";
-      pos: THREE.Vector3;
-    }[] = [
+    [
       {
-        dim: xd,
-        axis: "x",
-        pos: new THREE.Vector3(
+        d: xd,
+        a: "x" as const,
+        p: new THREE.Vector3(
           ((xN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
           yO - nO,
-          zO - lbM,
+          zO - lM,
         ),
       },
       {
-        dim: yd,
-        axis: "y",
-        pos: new THREE.Vector3(
+        d: yd,
+        a: "y" as const,
+        p: new THREE.Vector3(
           xO - nO,
           ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
-          zO - lbM,
+          zO - lM,
         ),
       },
       {
-        dim: zd,
-        axis: "z",
-        pos: new THREE.Vector3(
-          xO - lbM,
+        d: zd,
+        a: "z" as const,
+        p: new THREE.Vector3(
+          xO - lM,
           yO - nO,
           ((zN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE,
         ),
       },
-    ];
-    dimLabelData.forEach(({ dim, axis, pos }) => {
-      const displayName = getDimensionDisplayName(dim);
-      const s = makeTextSprite(displayName, {
-        color: AXIS_COLORS[axis].css,
+    ].forEach(({ d, a, p }) => {
+      const dn = getDimensionDisplayName(d);
+      const sp = txtSp(dn, {
+        color: AX[a].css,
         size: 34,
         bold: true,
         scale: 0.65,
       });
-      s.position.copy(pos);
-      s.userData = { conceptTag: "dimensions" };
-      ctx.labelGroup.add(s);
+      sp.position.copy(p);
+      sp.userData = { conceptTag: "dimensions" };
+      s.lblG.add(sp);
     });
 
-    /* ---- axis lines ---- */
-    const base = new THREE.Vector3(
+    const bs = new THREE.Vector3(
       xO - CELL_STRIDE * 0.5,
       yO - CELL_STRIDE * 0.5,
       zO - CELL_STRIDE * 0.5,
     );
-    const addAL = (a: THREE.Vector3, b: THREE.Vector3, c: number) => {
-      const g = new THREE.BufferGeometry().setFromPoints([a, b]);
-      const m = new THREE.LineBasicMaterial({
-        color: c,
-        transparent: true,
-        opacity: 0.55,
-      });
-      const l = new THREE.Line(g, m);
+    const aAL = (a: THREE.Vector3, b: THREE.Vector3, c: number) => {
+      const l = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([a, b]),
+        new THREE.LineBasicMaterial({
+          color: c,
+          transparent: true,
+          opacity: 0.55,
+        }),
+      );
       l.userData = { conceptTag: "dimensions" };
-      ctx.axisGroup.add(l);
+      s.axG.add(l);
     };
-    addAL(
-      base.clone(),
-      new THREE.Vector3(-base.x + CELL_STRIDE * 0.3, base.y, base.z),
-      AXIS_COLORS.x.hex,
+    aAL(
+      bs.clone(),
+      new THREE.Vector3(-bs.x + CELL_STRIDE * 0.3, bs.y, bs.z),
+      AX.x.hex,
     );
-    addAL(
-      base.clone(),
-      new THREE.Vector3(base.x, -base.y + CELL_STRIDE * 0.3, base.z),
-      AXIS_COLORS.y.hex,
+    aAL(
+      bs.clone(),
+      new THREE.Vector3(bs.x, -bs.y + CELL_STRIDE * 0.3, bs.z),
+      AX.y.hex,
     );
-    addAL(
-      base.clone(),
-      new THREE.Vector3(base.x, base.y, -base.z + CELL_STRIDE * 0.3),
-      AXIS_COLORS.z.hex,
+    aAL(
+      bs.clone(),
+      new THREE.Vector3(bs.x, bs.y, -bs.z + CELL_STRIDE * 0.3),
+      AX.z.hex,
     );
 
-    ctx.buildTime = performance.now();
-    ctx.hoveredMesh = null;
-    ctx.selectedMesh = null;
+    s.bT = performance.now();
+    s.hovM = null;
+    s.selM = null;
     setSelCell(null);
     setHoverCell(null);
-  }, [axes, allCells]);
+  }, [effDims, allCells, dimDisp, axes, effLvl]);
 
   /* ================================================================ */
   /*  Concept overlay                                                  */
   /* ================================================================ */
   useEffect(() => {
-    const ctx = sceneRef.current;
-    if (!ctx || !ctx.cubeMetrics) return;
-    disposeGroup(ctx.conceptGroup);
-    const met = ctx.cubeMetrics;
-    const { xN, yN, zN, xOff: xO, yOff: yO, zOff: zO } = met;
+    const s = sRef.current;
+    if (!s || !s.cm) return;
+    dispGrp(s.conG);
+    const m = s.cm,
+      { xN, yN, zN, xO, yO, zO } = m;
 
-    /* ---- grey / un-grey ---- */
-    ctx.cubeGroup.children.forEach((c) => {
+    s.cubeG.children.forEach((c) => {
       if (!(c instanceof THREE.Mesh) || !c.userData.cellInfo) return;
-      const mat = c.material as THREE.MeshPhongMaterial;
+      const mt = c.material as THREE.MeshPhongMaterial;
       const oc = c.userData.originalColor as THREE.Color;
-      if (!anyConcept && !activeOp) {
-        mat.color.copy(oc);
-        mat.opacity = 0.88;
+      if (!anyCon && !actOp) {
+        mt.color.copy(oc);
+        mt.opacity = 0.88;
         return;
       }
-      if (activeOp) return;
+      if (actOp) return;
       const hl =
-        activeConcepts.has("cells") ||
-        activeConcepts.has("facts") ||
-        activeConcepts.has("measures");
-      mat.color.setHex(hl ? undefined! : GREY_COLOR);
-      if (hl) mat.color.copy(oc);
-      else mat.color.setHex(GREY_COLOR);
-      mat.opacity = hl ? 0.88 : GREY_OPACITY;
+        actCon.has("cells") || actCon.has("facts") || actCon.has("measures");
+      if (hl) {
+        mt.color.copy(oc);
+        mt.opacity = 0.88;
+      } else {
+        mt.color.setHex(GREY_HEX);
+        mt.opacity = GREY_OP;
+      }
     });
-
     const uLV = (o: THREE.Object3D) => {
-      if (!anyConcept && !activeOp) {
+      if (!anyCon && !actOp) {
         if (o instanceof THREE.Sprite) o.material.opacity = 1;
         if (o instanceof THREE.Line)
           (o.material as THREE.LineBasicMaterial).opacity = 0.55;
         return;
       }
-      if (activeOp) return;
-      const tag = o.userData.conceptTag as string | undefined;
-      const rel = tag && activeConcepts.has(tag as ConceptId);
-      if (o instanceof THREE.Sprite) o.material.opacity = rel ? 1 : 0.15;
+      if (actOp) return;
+      const tg = o.userData.conceptTag as string | undefined;
+      const rl = tg && actCon.has(tg as ConceptId);
+      if (o instanceof THREE.Sprite) o.material.opacity = rl ? 1 : 0.15;
       if (o instanceof THREE.Line)
-        (o.material as THREE.LineBasicMaterial).opacity = rel ? 0.7 : 0.08;
+        (o.material as THREE.LineBasicMaterial).opacity = rl ? 0.7 : 0.08;
     };
-    ctx.labelGroup.children.forEach(uLV);
-    ctx.axisGroup.children.forEach(uLV);
-
-    if (!anyConcept) return;
+    s.lblG.children.forEach(uLV);
+    s.axG.children.forEach(uLV);
+    if (!anyCon) return;
 
     const cc = new THREE.Vector3(
       xO + ((xN - 1) * CELL_STRIDE) / 2,
@@ -836,16 +791,10 @@ const OlapCube: React.FC = () => {
       zO + ((zN - 1) * CELL_STRIDE) / 2,
     );
 
-    /* ---- DIMENSIONS ---- */
-    if (activeConcepts.has("dimensions")) {
+    if (actCon.has("dimensions")) {
       const cd = getConceptById("dimensions");
       (["x", "y", "z"] as const).forEach((ax) => {
-        const dn =
-          ax === "x"
-            ? met.xDimDisplay
-            : ax === "y"
-              ? met.yDimDisplay
-              : met.zDimDisplay;
+        const dn = ax === "x" ? m.xDisp : ax === "y" ? m.yDisp : m.zDisp;
         const n = ax === "x" ? xN : ax === "y" ? yN : zN;
         const off =
           ax === "x"
@@ -865,11 +814,9 @@ const OlapCube: React.FC = () => {
                   yO - CELL_STRIDE,
                   ((n - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 1.8,
                 );
-        const badge = makeBadgeSprite(`DIMENSION: ${dn}`, cd.color, {
-          scale: 0.55,
-        });
-        badge.position.copy(off);
-        ctx.conceptGroup.add(badge);
+        const b = badgeSp(`DIMENSION: ${dn}`, cd.color, { scale: 0.55 });
+        b.position.copy(off);
+        s.conG.add(b);
         const ae =
           ax === "x"
             ? new THREE.Vector3(
@@ -888,33 +835,27 @@ const OlapCube: React.FC = () => {
                   yO - CELL_STRIDE * 0.5,
                   ((n - 1) * CELL_STRIDE) / 2 + zO + CELL_STRIDE * 0.6,
                 );
-        ctx.conceptGroup.add(
-          makeDashedLine(off, ae, new THREE.Color(cd.color).getHex()),
-        );
+        s.conG.add(dashLn(off, ae, new THREE.Color(cd.color).getHex()));
       });
     }
-
-    /* ---- MEMBERS ---- */
-    if (activeConcepts.has("members")) {
+    if (actCon.has("members")) {
       const cd = getConceptById("members");
       const mp = new THREE.Vector3(
         xO,
         yO - CELL_STRIDE * 1.6,
         zO - CELL_STRIDE * 1.6,
       );
-      const badge = makeBadgeSprite("MEMBER (value in a dimension)", cd.color, {
+      const b = badgeSp("MEMBER (value in a dimension)", cd.color, {
         scale: 0.48,
       });
-      badge.position.copy(mp);
-      ctx.conceptGroup.add(badge);
+      b.position.copy(mp);
+      s.conG.add(b);
       const tp = new THREE.Vector3(
         xO,
         yO - CELL_STRIDE * 0.88,
         zO - CELL_STRIDE * 0.88,
       );
-      ctx.conceptGroup.add(
-        makeDashedLine(mp, tp, new THREE.Color(cd.color).getHex()),
-      );
+      s.conG.add(dashLn(mp, tp, new THREE.Color(cd.color).getHex()));
       const rg = new THREE.RingGeometry(0.32, 0.38, 32);
       const rm = new THREE.MeshBasicMaterial({
         color: cd.color,
@@ -925,19 +866,17 @@ const OlapCube: React.FC = () => {
       });
       const rr = new THREE.Mesh(rg, rm);
       rr.position.copy(tp);
-      ctx.conceptGroup.add(rr);
+      s.conG.add(rr);
     }
-
-    /* ---- CELLS ---- */
-    if (activeConcepts.has("cells")) {
+    if (actCon.has("cells")) {
       const cd = getConceptById("cells");
       const ci = Math.min(1, xN - 1),
         cj = Math.min(1, yN - 1),
-        ck = Math.min(1, zN - 1);
+        ckk = Math.min(1, zN - 1);
       const cp = new THREE.Vector3(
         ci * CELL_STRIDE + xO,
         cj * CELL_STRIDE + yO,
-        ck * CELL_STRIDE + zO,
+        ckk * CELL_STRIDE + zO,
       );
       const hG = new THREE.EdgesGeometry(
         new THREE.BoxGeometry(
@@ -953,22 +892,16 @@ const OlapCube: React.FC = () => {
       });
       const h = new THREE.LineSegments(hG, hM);
       h.position.copy(cp);
-      ctx.conceptGroup.add(h);
+      s.conG.add(h);
       const bp = cp
         .clone()
         .add(new THREE.Vector3(CELL_STRIDE * 1.4, CELL_STRIDE * 1.4, 0));
-      const bb = makeBadgeSprite("CELL (intersection)", cd.color, {
-        scale: 0.48,
-      });
+      const bb = badgeSp("CELL (intersection)", cd.color, { scale: 0.48 });
       bb.position.copy(bp);
-      ctx.conceptGroup.add(bb);
-      ctx.conceptGroup.add(
-        makeDashedLine(bp, cp, new THREE.Color(cd.color).getHex()),
-      );
+      s.conG.add(bb);
+      s.conG.add(dashLn(bp, cp, new THREE.Color(cd.color).getHex()));
     }
-
-    /* ---- MEASURES ---- */
-    if (activeConcepts.has("measures")) {
+    if (actCon.has("measures")) {
       const cd = getConceptById("measures");
       const fp = new THREE.Vector3(
         Math.min(1, xN - 1) * CELL_STRIDE + xO,
@@ -976,22 +909,16 @@ const OlapCube: React.FC = () => {
         (zN - 1) * CELL_STRIDE + zO + CELL_SIZE / 2 + 0.01,
       );
       const bp = fp.clone().add(new THREE.Vector3(0, 0, CELL_STRIDE * 2));
-      const b = makeBadgeSprite("MEASURE (numeric value)", cd.color, {
-        scale: 0.48,
-      });
+      const b = badgeSp("MEASURE (numeric value)", cd.color, { scale: 0.48 });
       b.position.copy(bp);
-      ctx.conceptGroup.add(b);
-      ctx.conceptGroup.add(
-        makeDashedLine(bp, fp, new THREE.Color(cd.color).getHex()),
-      );
+      s.conG.add(b);
+      s.conG.add(dashLn(bp, fp, new THREE.Color(cd.color).getHex()));
     }
-
-    /* ---- FACTS ---- */
-    if (activeConcepts.has("facts")) {
+    if (actCon.has("facts")) {
       const cd = getConceptById("facts");
-      const hx = ((xN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8;
-      const hy = ((yN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8;
-      const hz = ((zN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8;
+      const hx = ((xN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8,
+        hy = ((yN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8,
+        hz = ((zN - 1) * CELL_STRIDE) / 2 + CELL_SIZE * 0.8;
       const bG2 = new THREE.EdgesGeometry(
         new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2),
       );
@@ -1005,100 +932,89 @@ const OlapCube: React.FC = () => {
       const bb2 = new THREE.LineSegments(bG2, bM2);
       bb2.computeLineDistances();
       bb2.position.copy(cc);
-      ctx.conceptGroup.add(bb2);
+      s.conG.add(bb2);
       const bp = cc
         .clone()
         .add(new THREE.Vector3(hx + CELL_STRIDE, hy + CELL_STRIDE, 0));
-      const b = makeBadgeSprite("FACT TABLE (all data)", cd.color, {
-        scale: 0.52,
-      });
+      const b = badgeSp("FACT TABLE (all data)", cd.color, { scale: 0.52 });
       b.position.copy(bp);
-      ctx.conceptGroup.add(b);
-      ctx.conceptGroup.add(
-        makeDashedLine(
+      s.conG.add(b);
+      s.conG.add(
+        dashLn(
           bp,
           cc.clone().add(new THREE.Vector3(hx * 0.5, hy * 0.5, 0)),
           new THREE.Color(cd.color).getHex(),
         ),
       );
     }
-
-    /* ---- GRANULARITY ---- */
-    if (activeConcepts.has("granularity")) {
+    if (actCon.has("granularity")) {
       const cd = getConceptById("granularity");
-      const y2 = yO - CELL_STRIDE * 0.5;
-      const z2 = zO - CELL_STRIDE * 0.5;
+      const y2 = yO - CELL_STRIDE * 0.5,
+        z2 = zO - CELL_STRIDE * 0.5;
       for (let i = 0; i < xN; i++) {
         const dG = new THREE.SphereGeometry(0.06, 12, 12);
         const dM = new THREE.MeshBasicMaterial({ color: cd.color });
         const d = new THREE.Mesh(dG, dM);
         d.position.set(i * CELL_STRIDE + xO, y2, z2);
-        ctx.conceptGroup.add(d);
+        s.conG.add(d);
       }
       if (xN >= 2) {
         const bY = y2 - 0.4;
-        ctx.conceptGroup.add(
-          makeSolidLine(
+        s.conG.add(
+          solidLn(
             new THREE.Vector3(xO, bY, z2),
             new THREE.Vector3((xN - 1) * CELL_STRIDE + xO, bY, z2),
             new THREE.Color(cd.color).getHex(),
           ),
         );
-        for (let i = 0; i < xN; i++) {
-          ctx.conceptGroup.add(
-            makeSolidLine(
+        for (let i = 0; i < xN; i++)
+          s.conG.add(
+            solidLn(
               new THREE.Vector3(i * CELL_STRIDE + xO, y2, z2),
               new THREE.Vector3(i * CELL_STRIDE + xO, bY, z2),
               new THREE.Color(cd.color).getHex(),
               0.4,
             ),
           );
-        }
       }
-      const granBadge = makeBadgeSprite(
-        `GRANULARITY: ${xN} members (${met.xDimDisplay})`,
-        cd.color,
-        { scale: 0.45 },
-      );
-      granBadge.position.set(((xN - 1) * CELL_STRIDE) / 2 + xO, y2 - 1.0, z2);
-      ctx.conceptGroup.add(granBadge);
+      const gb = badgeSp(`GRANULARITY: ${xN} members (${m.xDisp})`, cd.color, {
+        scale: 0.45,
+      });
+      gb.position.set(((xN - 1) * CELL_STRIDE) / 2 + xO, y2 - 1.0, z2);
+      s.conG.add(gb);
     }
-
-    /* ---- ATTRIBUTES ---- */
-    if (activeConcepts.has("attributes")) {
+    if (actCon.has("attributes")) {
       const cd = getConceptById("attributes");
       const tp = new THREE.Vector3(
         xO,
         yO - CELL_STRIDE * 0.88,
         zO - CELL_STRIDE * 0.88,
       );
-      const xDim = getDimensionById(met.xDimId)!;
+      //const xDim = getDimensionById(m.xId)!;
       const attrs = [
-        { k: "Name", v: xDim.members[0] },
+        { k: "Name", v: effDims.x.members[0] },
         { k: "Code", v: "SKU-001" },
         { k: "Color", v: "Silver" },
         { k: "Weight", v: "0.4 kg" },
       ];
-      const sy = tp.y;
-      const ax = tp.x - CELL_STRIDE * 2.5;
-      const az = tp.z - CELL_STRIDE * 0.5;
+      const sy = tp.y,
+        ax2 = tp.x - CELL_STRIDE * 2.5,
+        az = tp.z - CELL_STRIDE * 0.5;
       attrs.forEach((a, i) => {
-        const l = makeBadgeSprite(
-          `${a.k}: ${a.v}`,
-          i === 0 ? cd.color : "#6366f1",
-          { scale: 0.35 },
-        );
-        l.position.set(ax, sy - i * 0.45, az);
-        ctx.conceptGroup.add(l);
+        const l = badgeSp(`${a.k}: ${a.v}`, i === 0 ? cd.color : "#6366f1", {
+          scale: 0.35,
+        });
+        l.position.set(ax2, sy - i * 0.45, az);
+        s.conG.add(l);
       });
-      const mb = makeBadgeSprite("ATTRIBUTES (member properties)", cd.color, {
+      const mb = badgeSp("ATTRIBUTES (member properties)", cd.color, {
         scale: 0.45,
       });
-      mb.position.set(ax, sy + 0.6, az);
-      ctx.conceptGroup.add(mb);
-      ctx.conceptGroup.add(
-        makeDashedLine(
-          new THREE.Vector3(ax + 0.8, sy - 0.2, az),
+      mb.position.set(ax2, sy + 0.6, az);
+      s.conG.add(mb);
+      s.conG.add(
+        dashLn(
+          new THREE.Vector3(ax2 + 0.8, sy - 0.2, az),
           tp,
           new THREE.Color(cd.color).getHex(),
         ),
@@ -1106,509 +1022,461 @@ const OlapCube: React.FC = () => {
     }
 
     /* ---- HIERARCHIES ---- */
-    if (activeConcepts.has("hierarchies")) {
+    if (actCon.has("hierarchies")) {
       const cd = getConceptById("hierarchies");
-      const xDim = getDimensionById(met.xDimId)!;
+      const xDim = getDimensionById(m.xId)!;
       const hier = xDim.hierarchy;
-
       if (hier && hier.length > 0) {
-        const treeBaseX = ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 2.5;
-        const treeBaseY = yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE;
-        const treeBaseZ = zO + ((zN - 1) * CELL_STRIDE) / 2;
-        const levelSpacing = 1.6;
-        const conceptCol = new THREE.Color(cd.color).getHex();
+        const bx = ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 2.5;
+        const by = yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE;
+        const bz = zO + ((zN - 1) * CELL_STRIDE) / 2;
+        const ls = 1.6;
+        const hc = new THREE.Color(cd.color).getHex();
+        const curLvlIdx = m.xLvl;
 
-        /* which level is currently displayed? */
-        const currentLevelName = findCurrentLevel(xDim);
+        const tb = badgeSp(`HIERARCHY: ${xDim.name}`, cd.color, {
+          scale: 0.52,
+        });
+        tb.position.set(bx, by + 1.0, bz);
+        s.conG.add(tb);
 
-        /* title */
-        const titleBadge = makeBadgeSprite(
-          `HIERARCHY: ${xDim.name}`,
-          cd.color,
-          { scale: 0.52 },
-        );
-        titleBadge.position.set(treeBaseX, treeBaseY + 1.0, treeBaseZ);
-        ctx.conceptGroup.add(titleBadge);
-
-        /* draw tree */
-        interface NodeInfo {
+        interface NI {
           pos: THREE.Vector3;
         }
-        const levelNodes: NodeInfo[][] = [];
-        let maxDisplayWidth = 0;
+        const ln: NI[][] = [];
+        let mxW = 0;
 
-        hier.forEach((level, li) => {
-          const yPos = treeBaseY - li * levelSpacing;
-          const displayMembers =
-            level.members.length > 4
-              ? [...level.members.slice(0, 3), "…"]
-              : [...level.members];
-          const memberSpacing = 1.2;
-          const totalWidth = Math.max(
-            0,
-            (displayMembers.length - 1) * memberSpacing,
-          );
-          if (totalWidth > maxDisplayWidth) maxDisplayWidth = totalWidth;
-          const nodes: NodeInfo[] = [];
+        hier.forEach((lv, li) => {
+          const yp = by - li * ls;
+          const dm =
+            lv.members.length > 4
+              ? [...lv.members.slice(0, 3), "…"]
+              : [...lv.members];
+          const ms2 = 1.2;
+          const tw = Math.max(0, (dm.length - 1) * ms2);
+          if (tw > mxW) mxW = tw;
+          const ns: NI[] = [];
+          const isCur = li === curLvlIdx;
 
-          const isCurrent = level.levelName === currentLevelName;
-
-          /* level name label */
-          const levelLabel = makeBadgeSprite(
-            isCurrent ? `▸ ${level.levelName} (current)` : level.levelName,
-            isCurrent ? cd.color : "#777",
+          const ll = badgeSp(
+            isCur ? `▸ ${lv.levelName} (current)` : lv.levelName,
+            isCur ? cd.color : "#777",
             { scale: 0.35 },
           );
-          levelLabel.position.set(
-            treeBaseX - totalWidth / 2 - 1.8,
-            yPos,
-            treeBaseZ,
-          );
-          ctx.conceptGroup.add(levelLabel);
+          ll.position.set(bx - tw / 2 - 1.8, yp, bz);
+          s.conG.add(ll);
 
-          /* member nodes */
-          displayMembers.forEach((member, mi) => {
-            const xPos = treeBaseX - totalWidth / 2 + mi * memberSpacing;
-            const pos = new THREE.Vector3(xPos, yPos, treeBaseZ);
-
-            const nodeRadius = isCurrent ? 0.22 : 0.16;
-            const nodeG = new THREE.CircleGeometry(nodeRadius, 24);
-            const nodeM = new THREE.MeshBasicMaterial({
-              color: isCurrent ? cd.color : "#999",
+          dm.forEach((mem, mi) => {
+            const xp = bx - tw / 2 + mi * ms2;
+            const pos = new THREE.Vector3(xp, yp, bz);
+            const nr = isCur ? 0.22 : 0.16;
+            const ng = new THREE.CircleGeometry(nr, 24);
+            const nm = new THREE.MeshBasicMaterial({
+              color: isCur ? cd.color : "#999",
               side: THREE.DoubleSide,
               depthTest: false,
               transparent: true,
-              opacity: isCurrent ? 0.95 : 0.65,
+              opacity: isCur ? 0.95 : 0.65,
             });
-            const node = new THREE.Mesh(nodeG, nodeM);
-            node.position.copy(pos);
-            ctx.conceptGroup.add(node);
-
-            const lbl = makeTextSprite(member, {
-              color: isCurrent ? "#111" : "#666",
-              size: isCurrent ? 28 : 24,
-              bold: isCurrent,
+            const nd = new THREE.Mesh(ng, nm);
+            nd.position.copy(pos);
+            s.conG.add(nd);
+            const lb = txtSp(mem, {
+              color: isCur ? "#111" : "#666",
+              size: isCur ? 28 : 24,
+              bold: isCur,
               scale: 0.35,
             });
-            lbl.position.set(xPos, yPos - 0.4, treeBaseZ);
-            ctx.conceptGroup.add(lbl);
-
-            nodes.push({ pos });
+            lb.position.set(xp, yp - 0.4, bz);
+            s.conG.add(lb);
+            ns.push({ pos });
           });
-
-          levelNodes.push(nodes);
+          ln.push(ns);
         });
 
-        /* connecting lines */
-        for (let li = 0; li < levelNodes.length - 1; li++) {
-          const parents = levelNodes[li];
-          const children = levelNodes[li + 1];
-          if (parents.length === 0 || children.length === 0) continue;
-          const cpp = Math.max(1, Math.ceil(children.length / parents.length));
-          children.forEach((child, ci) => {
-            const pi = Math.min(Math.floor(ci / cpp), parents.length - 1);
-            ctx.conceptGroup.add(
-              makeSolidLine(
-                parents[pi].pos.clone().add(new THREE.Vector3(0, -0.25, 0)),
-                child.pos.clone().add(new THREE.Vector3(0, 0.25, 0)),
-                conceptCol,
+        for (let li = 0; li < ln.length - 1; li++) {
+          const ps = ln[li],
+            cs = ln[li + 1];
+          if (!ps.length || !cs.length) continue;
+          const cpp = Math.max(1, Math.ceil(cs.length / ps.length));
+          cs.forEach((ch, ci) => {
+            const pi = Math.min(Math.floor(ci / cpp), ps.length - 1);
+            s.conG.add(
+              solidLn(
+                ps[pi].pos.clone().add(new THREE.Vector3(0, -0.25, 0)),
+                ch.pos.clone().add(new THREE.Vector3(0, 0.25, 0)),
+                hc,
                 0.35,
               ),
             );
           });
         }
 
-        /* connector to the X axis */
-        const axisTarget = new THREE.Vector3(
+        const at = new THREE.Vector3(
           ((xN - 1) * CELL_STRIDE) / 2 + xO + CELL_STRIDE * 0.6,
           yO - CELL_STRIDE * 0.5,
           zO - CELL_STRIDE * 0.5,
         );
-        const treeBottom = new THREE.Vector3(
-          treeBaseX,
-          treeBaseY - (hier.length - 1) * levelSpacing - 0.8,
-          treeBaseZ,
+        const tBot = new THREE.Vector3(
+          bx,
+          by - (hier.length - 1) * ls - 0.8,
+          bz,
         );
-        ctx.conceptGroup.add(
-          makeDashedLine(treeBottom, axisTarget, conceptCol),
-        );
+        s.conG.add(dashLn(tBot, at, hc));
 
-        /* drill / roll annotation */
-        const annotateX = treeBaseX + maxDisplayWidth * 0.5 + 2.2;
-        const annotateYTop = treeBaseY - 0.2;
-        const annotateYBot = treeBaseY - (hier.length - 1) * levelSpacing + 0.2;
-
-        const arrowLabel = makeBadgeSprite(
-          "▼ Drill Down  ▲ Roll Up",
-          cd.color,
-          { scale: 0.36 },
-        );
-        arrowLabel.position.set(
-          annotateX,
-          (annotateYTop + annotateYBot) / 2,
-          treeBaseZ,
-        );
-        ctx.conceptGroup.add(arrowLabel);
-
-        ctx.conceptGroup.add(
-          makeSolidLine(
-            new THREE.Vector3(annotateX, annotateYTop, treeBaseZ),
-            new THREE.Vector3(annotateX, annotateYBot, treeBaseZ),
-            conceptCol,
+        const anX = bx + mxW * 0.5 + 2.2;
+        const anYT = by - 0.2,
+          anYB = by - (hier.length - 1) * ls + 0.2;
+        const al = badgeSp("▼ Drill Down  ▲ Roll Up", cd.color, {
+          scale: 0.36,
+        });
+        al.position.set(anX, (anYT + anYB) / 2, bz);
+        s.conG.add(al);
+        s.conG.add(
+          solidLn(
+            new THREE.Vector3(anX, anYT, bz),
+            new THREE.Vector3(anX, anYB, bz),
+            hc,
             0.45,
           ),
         );
       }
     }
-  }, [activeConcepts, anyConcept, axes, allCells, activeOp]);
+  }, [actCon, anyCon, axes, allCells, actOp, effDims, dimDisp, effLvl]);
 
   /* ================================================================ */
   /*  Operation step targets                                           */
   /* ================================================================ */
-  const getStepEndTargets = useCallback(
-    (opId: string, step: number): Map<string, Partial<CellAnimTarget>> => {
-      const ctx = sceneRef.current;
-      const anim = animRef.current;
-      if (!ctx || !ctx.cubeMetrics || !anim) return new Map();
-      const met = ctx.cubeMetrics;
-      const { xN, yN, zN, xOff: xO, yOff: yO, zOff: zO } = met;
-      const ends = new Map<string, Partial<CellAnimTarget>>();
-      const sliceZ = Math.min(1, zN - 1);
-      const diceXMax = Math.min(1, xN - 1);
-      const diceYMax = Math.min(1, yN - 1);
+  const getTargets = useCallback((opId: string, step: number) => {
+    const s = sRef.current,
+      an = anRef.current;
+    if (!s || !s.cm || !an) return new Map<string, Partial<CellAT>>();
+    const { xN, yN, zN, xO, yO, zO } = s.cm;
+    const ends = new Map<string, Partial<CellAT>>();
+    const sZ = Math.min(1, zN - 1),
+      dXM = Math.min(1, xN - 1),
+      dYM = Math.min(1, yN - 1);
 
-      switch (opId) {
-        case "slice": {
-          if (step === 0) {
-            ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: info.zIndex === sliceZ ? 1 : 0.12,
-                endColor:
-                  info.zIndex === sliceZ
-                    ? oc.clone()
-                    : new THREE.Color(0xdddddd),
-                endScale: info.zIndex === sliceZ ? 1.05 : 0.9,
-              });
+    switch (opId) {
+      case "slice": {
+        if (step === 0) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: i.zIndex === sZ ? 1 : 0.12,
+              endCol: i.zIndex === sZ ? oc.clone() : new THREE.Color(0xdddddd),
+              endScale: i.zIndex === sZ ? 1.05 : 0.9,
             });
-          } else if (step === 1) {
-            ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: info.zIndex === sliceZ ? 1 : 0,
-                endScale: info.zIndex === sliceZ ? 1 : 0.01,
-                endColor:
-                  info.zIndex === sliceZ
-                    ? oc.clone()
-                    : new THREE.Color(0xdddddd),
-              });
+          });
+        } else if (step === 1) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: i.zIndex === sZ ? 1 : 0,
+              endScale: i.zIndex === sZ ? 1 : 0.01,
+              endCol: i.zIndex === sZ ? oc.clone() : new THREE.Color(0xdddddd),
             });
-          } else {
-            ctx.meshMap.forEach((m, k) => {
-              const info = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              if (info.zIndex === sliceZ) {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    info.xIndex * CELL_STRIDE + xO,
-                    info.yIndex * CELL_STRIDE + yO,
-                    0,
-                  ),
-                  endOpacity: 1,
-                  endScale: 1.1,
-                  endColor: oc.clone(),
-                });
-              } else {
-                ends.set(k, { endOpacity: 0, endScale: 0.01 });
-              }
-            });
-          }
-          break;
-        }
-        case "dice": {
-          const inD = (i: CellInfo) =>
-            i.xIndex <= diceXMax && i.yIndex <= diceYMax;
-          if (step === 0) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: inD(i) ? 1 : 0.1,
-                endColor: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
-                endScale: inD(i) ? 1.05 : 0.85,
-              });
-            });
-          } else if (step === 1) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: inD(i) ? 1 : 0,
-                endScale: inD(i) ? 1 : 0.01,
-                endColor: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
-              });
-            });
-          } else {
-            const cxO = (-diceXMax * CELL_STRIDE) / 2;
-            const cyO = (-diceYMax * CELL_STRIDE) / 2;
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              if (inD(i)) {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    i.xIndex * CELL_STRIDE + cxO,
-                    i.yIndex * CELL_STRIDE + cyO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 1,
-                  endScale: 1.08,
-                  endColor: oc.clone(),
-                });
-              } else {
-                ends.set(k, { endOpacity: 0, endScale: 0.01 });
-              }
-            });
-          }
-          break;
-        }
-        case "pivot": {
-          if (step === 0) {
-            ctx.meshMap.forEach((m, k) => {
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: 0.95,
-                endColor: oc.clone().offsetHSL(0, -0.1, 0.05),
-              });
-            });
-          } else {
-            const nxO = (-(yN - 1) * CELL_STRIDE) / 2;
-            const nyO = (-(xN - 1) * CELL_STRIDE) / 2;
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
+          });
+        } else {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            if (i.zIndex === sZ)
               ends.set(k, {
                 endPos: new THREE.Vector3(
-                  i.yIndex * CELL_STRIDE + nxO,
-                  i.xIndex * CELL_STRIDE + nyO,
+                  i.xIndex * CELL_STRIDE + xO,
+                  i.yIndex * CELL_STRIDE + yO,
+                  0,
+                ),
+                endOp: 1,
+                endScale: 1.1,
+                endCol: oc.clone(),
+              });
+            else ends.set(k, { endOp: 0, endScale: 0.01 });
+          });
+        }
+        break;
+      }
+      case "dice": {
+        const inD = (i: CellInfo) => i.xIndex <= dXM && i.yIndex <= dYM;
+        if (step === 0) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: inD(i) ? 1 : 0.1,
+              endCol: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
+              endScale: inD(i) ? 1.05 : 0.85,
+            });
+          });
+        } else if (step === 1) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: inD(i) ? 1 : 0,
+              endScale: inD(i) ? 1 : 0.01,
+              endCol: inD(i) ? oc.clone() : new THREE.Color(0xdddddd),
+            });
+          });
+        } else {
+          const cxO = (-dXM * CELL_STRIDE) / 2,
+            cyO = (-dYM * CELL_STRIDE) / 2;
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            if (inD(i))
+              ends.set(k, {
+                endPos: new THREE.Vector3(
+                  i.xIndex * CELL_STRIDE + cxO,
+                  i.yIndex * CELL_STRIDE + cyO,
                   i.zIndex * CELL_STRIDE + zO,
                 ),
-                endOpacity: 0.88,
-                endScale: 1,
-                endColor: oc.clone(),
+                endOp: 1,
+                endScale: 1.08,
+                endCol: oc.clone(),
               });
-            });
-          }
-          break;
+            else ends.set(k, { endOp: 0, endScale: 0.01 });
+          });
         }
-        case "drilldown": {
-          if (step === 0) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              ends.set(k, {
-                endOpacity: i.xIndex === 0 ? 1 : 0.5,
-                endColor:
-                  i.xIndex === 0 ? oc.clone() : new THREE.Color(0xcccccc),
-                endScale: i.xIndex === 0 ? 1.08 : 0.92,
-              });
+        break;
+      }
+      case "pivot": {
+        if (step === 0) {
+          s.mm.forEach((m, k) => {
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: 0.95,
+              endCol: oc.clone().offsetHSL(0, -0.1, 0.05),
             });
-          } else if (step === 1) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              if (i.xIndex === 0) {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    xO - CELL_STRIDE * 0.1,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 1,
-                  endScale: 1,
-                  endColor: oc.clone(),
-                });
-              } else {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    (i.xIndex + 1) * CELL_STRIDE + xO,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 0.65,
-                  endScale: 1,
-                  endColor: oc.clone().lerp(new THREE.Color(0xcccccc), 0.3),
-                });
-              }
+          });
+        } else {
+          const nxO = (-(yN - 1) * CELL_STRIDE) / 2,
+            nyO = (-(xN - 1) * CELL_STRIDE) / 2;
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endPos: new THREE.Vector3(
+                i.yIndex * CELL_STRIDE + nxO,
+                i.xIndex * CELL_STRIDE + nyO,
+                i.zIndex * CELL_STRIDE + zO,
+              ),
+              endOp: 0.88,
+              endScale: 1,
+              endCol: oc.clone(),
             });
-            anim.tempMeshMap.forEach((tm, k) => {
-              ends.set(k, {
-                endPos: new THREE.Vector3(
-                  xO + CELL_STRIDE * 0.9,
-                  tm.position.y,
-                  tm.position.z,
-                ),
-                endOpacity: 1,
-                endScale: 1,
-              });
+          });
+        }
+        break;
+      }
+      case "drilldown": {
+        if (step === 0) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            ends.set(k, {
+              endOp: i.xIndex === 0 ? 1 : 0.5,
+              endCol: i.xIndex === 0 ? oc.clone() : new THREE.Color(0xcccccc),
+              endScale: i.xIndex === 0 ? 1.08 : 0.92,
             });
-          } else {
-            const nxO = (-xN * CELL_STRIDE) / 2;
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              const newX = i.xIndex === 0 ? 0 : i.xIndex + 1;
+          });
+        } else if (step === 1) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            if (i.xIndex === 0)
               ends.set(k, {
                 endPos: new THREE.Vector3(
-                  newX * CELL_STRIDE + nxO,
+                  xO - CELL_STRIDE * 0.1,
                   i.yIndex * CELL_STRIDE + yO,
                   i.zIndex * CELL_STRIDE + zO,
                 ),
-                endOpacity: 0.88,
+                endOp: 1,
                 endScale: 1,
-                endColor: oc.clone(),
+                endCol: oc.clone(),
               });
-            });
-            anim.tempMeshMap.forEach((tm, k) => {
-              const nxO2 = (-xN * CELL_STRIDE) / 2;
+            else
               ends.set(k, {
                 endPos: new THREE.Vector3(
-                  1 * CELL_STRIDE + nxO2,
-                  tm.position.y,
-                  tm.position.z,
+                  (i.xIndex + 1) * CELL_STRIDE + xO,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
                 ),
-                endOpacity: 0.88,
+                endOp: 0.65,
                 endScale: 1,
+                endCol: oc.clone().lerp(new THREE.Color(0xcccccc), 0.3),
               });
+          });
+          an.tmpMap.forEach((tm, k) => {
+            ends.set(k, {
+              endPos: new THREE.Vector3(
+                xO + CELL_STRIDE * 0.9,
+                tm.position.y,
+                tm.position.z,
+              ),
+              endOp: 1,
+              endScale: 1,
             });
-          }
-          break;
+          });
+        } else {
+          const nxO2 = (-xN * CELL_STRIDE) / 2;
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            const nx = i.xIndex === 0 ? 0 : i.xIndex + 1;
+            ends.set(k, {
+              endPos: new THREE.Vector3(
+                nx * CELL_STRIDE + nxO2,
+                i.yIndex * CELL_STRIDE + yO,
+                i.zIndex * CELL_STRIDE + zO,
+              ),
+              endOp: 0.88,
+              endScale: 1,
+              endCol: oc.clone(),
+            });
+          });
+          an.tmpMap.forEach((tm, k) => {
+            const nxO2 = (-xN * CELL_STRIDE) / 2;
+            ends.set(k, {
+              endPos: new THREE.Vector3(
+                1 * CELL_STRIDE + nxO2,
+                tm.position.y,
+                tm.position.z,
+              ),
+              endOp: 0.88,
+              endScale: 1,
+            });
+          });
         }
-        case "rollup": {
-          if (step === 0) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              const hl = i.xIndex === 0 || i.xIndex === 1;
-              ends.set(k, {
-                endOpacity: hl ? 1 : 0.45,
-                endColor: hl ? oc.clone() : new THREE.Color(0xcccccc),
-                endScale: hl ? 1.06 : 0.92,
-              });
-            });
-          } else if (step === 1) {
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              if (i.xIndex === 1) {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    0 * CELL_STRIDE + xO,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 0,
-                  endScale: 0.5,
-                  endColor: oc.clone(),
-                });
-              } else if (i.xIndex === 0) {
-                ends.set(k, {
-                  endOpacity: 1,
-                  endScale: 1.2,
-                  endColor: oc.clone().offsetHSL(0, 0.1, 0.05),
-                });
-              } else {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    (i.xIndex - 1) * CELL_STRIDE + xO,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 0.7,
-                  endScale: 1,
-                  endColor: oc.clone(),
-                });
-              }
-            });
-          } else {
-            const nxN = xN - 1;
-            const nxO2 = (-(nxN - 1) * CELL_STRIDE) / 2;
-            ctx.meshMap.forEach((m, k) => {
-              const i = m.userData.cellInfo as CellInfo;
-              const oc = m.userData.originalColor as THREE.Color;
-              if (i.xIndex === 1) {
-                ends.set(k, { endOpacity: 0, endScale: 0.01 });
-              } else if (i.xIndex === 0) {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    0 * CELL_STRIDE + nxO2,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 1,
-                  endScale: 1.15,
-                  endColor: oc.clone().offsetHSL(0.02, 0.1, 0.05),
-                });
-              } else {
-                ends.set(k, {
-                  endPos: new THREE.Vector3(
-                    (i.xIndex - 1) * CELL_STRIDE + nxO2,
-                    i.yIndex * CELL_STRIDE + yO,
-                    i.zIndex * CELL_STRIDE + zO,
-                  ),
-                  endOpacity: 0.88,
-                  endScale: 1,
-                  endColor: oc.clone(),
-                });
-              }
-            });
-          }
-          break;
-        }
+        break;
       }
-      return ends;
-    },
-    [],
-  );
+      case "rollup": {
+        if (step === 0) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            const hl = i.xIndex <= 1;
+            ends.set(k, {
+              endOp: hl ? 1 : 0.45,
+              endCol: hl ? oc.clone() : new THREE.Color(0xcccccc),
+              endScale: hl ? 1.06 : 0.92,
+            });
+          });
+        } else if (step === 1) {
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            if (i.xIndex === 1)
+              ends.set(k, {
+                endPos: new THREE.Vector3(
+                  0 * CELL_STRIDE + xO,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
+                ),
+                endOp: 0,
+                endScale: 0.5,
+                endCol: oc.clone(),
+              });
+            else if (i.xIndex === 0)
+              ends.set(k, {
+                endOp: 1,
+                endScale: 1.2,
+                endCol: oc.clone().offsetHSL(0, 0.1, 0.05),
+              });
+            else
+              ends.set(k, {
+                endPos: new THREE.Vector3(
+                  (i.xIndex - 1) * CELL_STRIDE + xO,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
+                ),
+                endOp: 0.7,
+                endScale: 1,
+                endCol: oc.clone(),
+              });
+          });
+        } else {
+          const nxN = xN - 1,
+            nxO2 = (-(nxN - 1) * CELL_STRIDE) / 2;
+          s.mm.forEach((m, k) => {
+            const i = m.userData.cellInfo as CellInfo;
+            const oc = m.userData.originalColor as THREE.Color;
+            if (i.xIndex === 1) ends.set(k, { endOp: 0, endScale: 0.01 });
+            else if (i.xIndex === 0)
+              ends.set(k, {
+                endPos: new THREE.Vector3(
+                  0 + nxO2,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
+                ),
+                endOp: 1,
+                endScale: 1.15,
+                endCol: oc.clone().offsetHSL(0.02, 0.1, 0.05),
+              });
+            else
+              ends.set(k, {
+                endPos: new THREE.Vector3(
+                  (i.xIndex - 1) * CELL_STRIDE + nxO2,
+                  i.yIndex * CELL_STRIDE + yO,
+                  i.zIndex * CELL_STRIDE + zO,
+                ),
+                endOp: 0.88,
+                endScale: 1,
+                endCol: oc.clone(),
+              });
+          });
+        }
+        break;
+      }
+    }
+    return ends;
+  }, []);
 
-  /* ================================================================ */
-  /*  Operation step scene labels                                      */
-  /* ================================================================ */
-  const createStepLabels = useCallback(
-    (opId: string, step: number): THREE.Object3D[] => {
-      const ctx = sceneRef.current;
-      if (!ctx || !ctx.cubeMetrics) return [];
-      const met = ctx.cubeMetrics;
-      const { xN, yN, zN, xOff: xO, yOff: yO, zOff: zO } = met;
-      const labels: THREE.Object3D[] = [];
-      const opDef = getOperationById(opId);
-      if (!opDef) return [];
-      const color = opDef.color;
+  /* ---- operation labels ---- */
+  const mkLabels = useCallback(
+    (opId: string, step: number) => {
+      const s = sRef.current;
+      if (!s || !s.cm) return [] as THREE.Object3D[];
+      const cm = s.cm,
+        { xN, yN, zN, xO, yO, zO } = cm;
+      const ls: THREE.Object3D[] = [];
+      const op = getOperationById(opId);
+      if (!op) return ls;
+      const col = op.color;
+      const xDim = getDimensionById(cm.xId)!,
+        hier = xDim.hierarchy;
+      const curLvlName =
+        hier && cm.xLvl >= 0 && cm.xLvl < hier.length
+          ? hier[cm.xLvl].levelName
+          : "Current";
+      const nextLvlName =
+        hier && cm.xLvl + 1 < hier.length
+          ? hier[cm.xLvl + 1].levelName
+          : "Detail";
 
       switch (opId) {
         case "slice": {
-          const sliceZ = Math.min(1, zN - 1);
-          const zd = getDimensionById(met.zDimId)!;
-          const memberName = zd.members[sliceZ];
+          const sZ = Math.min(1, zN - 1);
+          //const zd = getDimensionById(cm.zId)!;
+          const zmem = effDims.z.members[sZ] ?? "?";
           if (step === 0) {
-            const b = makeBadgeSprite(
-              `✂️ Slice: ${met.zDimDisplay} = "${memberName}"`,
-              color,
-              { scale: 0.55 },
-            );
+            const b = badgeSp(`✂️ Slice: ${cm.zDisp} = "${zmem}"`, col, {
+              scale: 0.55,
+            });
             b.position.set(
               xO + ((xN - 1) * CELL_STRIDE) / 2,
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 1.8,
-              sliceZ * CELL_STRIDE + zO,
+              sZ * CELL_STRIDE + zO,
             );
-            labels.push(b);
-            const plW = (xN - 1) * CELL_STRIDE + CELL_SIZE * 1.5;
-            const plH = (yN - 1) * CELL_STRIDE + CELL_SIZE * 1.5;
+            ls.push(b);
+            const plW = (xN - 1) * CELL_STRIDE + CELL_SIZE * 1.5,
+              plH = (yN - 1) * CELL_STRIDE + CELL_SIZE * 1.5;
             const plG = new THREE.PlaneGeometry(plW, plH);
             const plM = new THREE.MeshBasicMaterial({
-              color,
+              color: col,
               transparent: true,
               opacity: 0.08,
               side: THREE.DoubleSide,
@@ -1618,34 +1486,32 @@ const OlapCube: React.FC = () => {
             pl.position.set(
               xO + ((xN - 1) * CELL_STRIDE) / 2,
               yO + ((yN - 1) * CELL_STRIDE) / 2,
-              sliceZ * CELL_STRIDE + zO,
+              sZ * CELL_STRIDE + zO,
             );
-            labels.push(pl);
+            ls.push(pl);
             const plBG = new THREE.EdgesGeometry(plG);
             const plBM = new THREE.LineBasicMaterial({
-              color,
+              color: col,
               transparent: true,
               opacity: 0.5,
             });
             const plB = new THREE.LineSegments(plBG, plBM);
             plB.position.copy(pl.position);
-            labels.push(plB);
+            ls.push(plB);
           } else if (step === 1) {
-            const b = makeBadgeSprite(
-              "Removing cells outside the plane…",
-              color,
-              { scale: 0.5 },
-            );
+            const b = badgeSp("Removing cells outside the plane…", col, {
+              scale: 0.5,
+            });
             b.position.set(
               xO + ((xN - 1) * CELL_STRIDE) / 2,
               yO - CELL_STRIDE * 2,
               zO - CELL_STRIDE,
             );
-            labels.push(b);
+            ls.push(b);
           } else {
-            const b = makeBadgeSprite(
-              `Result: 2D table (${met.xDimDisplay} × ${met.yDimDisplay})`,
-              color,
+            const b = badgeSp(
+              `Result: 2D table (${cm.xDisp} × ${cm.yDisp})`,
+              col,
               { scale: 0.55 },
             );
             b.position.set(
@@ -1653,19 +1519,17 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 1.8,
               0,
             );
-            labels.push(b);
+            ls.push(b);
           }
           break;
         }
         case "dice": {
-          const xd = getDimensionById(met.xDimId)!;
-          const yd = getDimensionById(met.yDimId)!;
-          const dx = Math.min(1, xN - 1);
-          const dy = Math.min(1, yN - 1);
+          const dx = Math.min(1, xN - 1),
+            dy = Math.min(1, yN - 1);
           if (step === 0) {
-            const b = makeBadgeSprite(
-              `🎲 Dice: ${xd.name} ∈ {${xd.members.slice(0, dx + 1).join(", ")}}, ${yd.name} ∈ {${yd.members.slice(0, dy + 1).join(", ")}}`,
-              color,
+            const b = badgeSp(
+              `🎲 Dice: ${cm.xName} ∈ {${effDims.x.members.slice(0, dx + 1).join(", ")}}, ${cm.yName} ∈ {${effDims.y.members.slice(0, dy + 1).join(", ")}}`,
+              col,
               { scale: 0.48 },
             );
             b.position.set(
@@ -1673,15 +1537,15 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
-            const bw = (dx + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
-            const bh = (dy + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
-            const bd = zN * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
+            ls.push(b);
+            const bw = (dx + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4,
+              bh = (dy + 1) * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4,
+              bd = zN * CELL_STRIDE - CELL_GAP + CELL_SIZE * 0.4;
             const bbG = new THREE.EdgesGeometry(
               new THREE.BoxGeometry(bw, bh, bd),
             );
             const bbM = new THREE.LineDashedMaterial({
-              color,
+              color: col,
               dashSize: 0.2,
               gapSize: 0.1,
               transparent: true,
@@ -1694,33 +1558,31 @@ const OlapCube: React.FC = () => {
               yO + (dy * CELL_STRIDE) / 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(bb);
+            ls.push(bb);
           } else if (step === 1) {
-            const b = makeBadgeSprite("Extracting sub-cube…", color, {
-              scale: 0.48,
-            });
+            const b = badgeSp("Extracting sub-cube…", col, { scale: 0.48 });
             b.position.set(xO - CELL_STRIDE * 2, yO, zO);
-            labels.push(b);
+            ls.push(b);
           } else {
-            const b = makeBadgeSprite(
-              `Sub-cube: ${dx + 1}×${dy + 1}×${zN} = ${(dx + 1) * (dy + 1) * zN} cells`,
-              color,
+            const b = badgeSp(
+              `Sub-cube: ${Math.min(2, xN)}×${Math.min(2, yN)}×${zN} = ${Math.min(2, xN) * Math.min(2, yN) * zN} cells`,
+              col,
               { scale: 0.5 },
             );
             b.position.set(
               0,
-              yO + (dy * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
+              yO + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
+            ls.push(b);
           }
           break;
         }
         case "pivot": {
           if (step === 0) {
-            const b = makeBadgeSprite(
-              `🔄 Pivot: Swap ${met.xDimDisplay} (X) ↔ ${met.yDimDisplay} (Y)`,
-              color,
+            const b = badgeSp(
+              `🔄 Pivot: Swap ${cm.xDisp} (X) ↔ ${cm.yDisp} (Y)`,
+              col,
               { scale: 0.52 },
             );
             b.position.set(
@@ -1728,47 +1590,36 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               0,
             );
-            labels.push(b);
+            ls.push(b);
           } else if (step === 1) {
-            const b = makeBadgeSprite("Rotating cells…", color, {
-              scale: 0.48,
+            const b = badgeSp("Rotating cells…", col, { scale: 0.48 });
+            b.position.set(
+              0,
+              yO + ((Math.max(xN, yN) - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
+              0,
+            );
+            ls.push(b);
+          } else {
+            const b = badgeSp(`Done: X = ${cm.yDisp}, Y = ${cm.xDisp}`, col, {
+              scale: 0.52,
             });
             b.position.set(
               0,
               yO + ((Math.max(xN, yN) - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               0,
             );
-            labels.push(b);
-          } else {
-            const b = makeBadgeSprite(
-              `Done: X = ${met.yDimDisplay}, Y = ${met.xDimDisplay}`,
-              color,
-              { scale: 0.52 },
-            );
-            b.position.set(
-              0,
-              yO + ((Math.max(xN, yN) - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
-              0,
-            );
-            labels.push(b);
+            ls.push(b);
           }
           break;
         }
         case "drilldown": {
-          const xd = getDimensionById(met.xDimId)!;
-          const hier = xd.hierarchy;
-          const parentName = xd.members[0];
+          const parent = effDims.x.members[0];
           const children =
             hier && hier.length >= 3
-              ? hier[2].members.slice(0, 2)
+              ? hier[Math.min(cm.xLvl + 1, hier.length - 1)].members.slice(0, 2)
               : ["Child A", "Child B"];
-          const curLevel = findCurrentLevel(xd) ?? "Current";
-          const nextLevel = hier
-            ? (hier.find((_l, i) => i > 0 && hier[i - 1].levelName === curLevel)
-                ?.levelName ?? "Detail")
-            : "Detail";
           if (step === 0) {
-            const b = makeBadgeSprite(`🔍 Current level: ${curLevel}`, color, {
+            const b = badgeSp(`🔍 Current level: ${curLvlName}`, col, {
               scale: 0.5,
             });
             b.position.set(
@@ -1776,11 +1627,11 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
+            ls.push(b);
           } else if (step === 1) {
-            const b = makeBadgeSprite(
-              `Expanding "${parentName}" → ${children.join(", ")}`,
-              color,
+            const b = badgeSp(
+              `Expanding "${parent}" → ${children.join(", ")}`,
+              col,
               { scale: 0.48 },
             );
             b.position.set(
@@ -1788,27 +1639,27 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2.5,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
-            const a1 = makeBadgeSprite(children[0], "#2d9", { scale: 0.38 });
+            ls.push(b);
+            const a1 = badgeSp(children[0], "#2d9", { scale: 0.38 });
             a1.position.set(
               xO - CELL_STRIDE * 0.1,
               yO - CELL_STRIDE * 1.5,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(a1);
-            const a2 = makeBadgeSprite(children[1] ?? "…", "#29d", {
-              scale: 0.38,
-            });
-            a2.position.set(
-              xO + CELL_STRIDE * 0.9,
-              yO - CELL_STRIDE * 1.5,
-              zO + ((zN - 1) * CELL_STRIDE) / 2,
-            );
-            labels.push(a2);
+            ls.push(a1);
+            if (children[1]) {
+              const a2 = badgeSp(children[1], "#29d", { scale: 0.38 });
+              a2.position.set(
+                xO + CELL_STRIDE * 0.9,
+                yO - CELL_STRIDE * 1.5,
+                zO + ((zN - 1) * CELL_STRIDE) / 2,
+              );
+              ls.push(a2);
+            }
           } else {
-            const b = makeBadgeSprite(
-              `Detail: ${nextLevel} level (${xN + 1} positions)`,
-              color,
+            const b = badgeSp(
+              `Detail: ${nextLvlName} level (${xN + 1} positions)`,
+              col,
               { scale: 0.5 },
             );
             b.position.set(
@@ -1816,17 +1667,15 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
+            ls.push(b);
           }
           break;
         }
         case "rollup": {
-          const xd = getDimensionById(met.xDimId)!;
-          const curLevel = findCurrentLevel(xd) ?? "Detail";
           if (step === 0) {
-            const b = makeBadgeSprite(
-              `📊 Current: ${curLevel} (${xN} members)`,
-              color,
+            const b = badgeSp(
+              `📊 Current: ${curLvlName} (${xN} members)`,
+              col,
               { scale: 0.5 },
             );
             b.position.set(
@@ -1834,11 +1683,11 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
+            ls.push(b);
           } else if (step === 1) {
-            const b = makeBadgeSprite(
-              `Merging "${xd.members[0]}" + "${xd.members[Math.min(1, xN - 1)]}" → aggregated`,
-              color,
+            const b = badgeSp(
+              `Merging "${effDims.x.members[0]}" + "${effDims.x.members[Math.min(1, xN - 1)]}" → aggregated`,
+              col,
               { scale: 0.48 },
             );
             b.position.set(
@@ -1846,46 +1695,41 @@ const OlapCube: React.FC = () => {
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2.5,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
-            const sb = makeBadgeSprite("Σ Sum", "#d97706", { scale: 0.4 });
+            ls.push(b);
+            const sb = badgeSp("Σ Sum", "#d97706", { scale: 0.4 });
             sb.position.set(
               xO + CELL_STRIDE * 0.1,
               yO - CELL_STRIDE * 1.2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(sb);
+            ls.push(sb);
           } else {
-            const b = makeBadgeSprite(
-              `Summary: ${xN - 1} members (aggregated)`,
-              color,
-              { scale: 0.5 },
-            );
+            const b = badgeSp(`Summary: ${xN - 1} members (aggregated)`, col, {
+              scale: 0.5,
+            });
             b.position.set(
               0,
               yO + ((yN - 1) * CELL_STRIDE) / 2 + CELL_STRIDE * 2,
               zO + ((zN - 1) * CELL_STRIDE) / 2,
             );
-            labels.push(b);
+            ls.push(b);
           }
           break;
         }
       }
-      return labels;
+      return ls;
     },
-    [],
+    [effDims],
   );
 
-  /* ================================================================ */
-  /*  Operation lifecycle                                              */
-  /* ================================================================ */
+  /* ---- operation lifecycle ---- */
   const setupStep = useCallback(
     (opId: string, step: number) => {
-      const ctx = sceneRef.current;
-      const anim = animRef.current;
-      if (!ctx || !anim) return;
-
-      anim.sceneLabels.forEach((l) => {
-        ctx.opGroup.remove(l);
+      const s = sRef.current,
+        an = anRef.current;
+      if (!s || !an) return;
+      an.lbls.forEach((l) => {
+        s.opG.remove(l);
         if (l instanceof THREE.Mesh) {
           l.geometry.dispose();
           (l.material as THREE.Material).dispose();
@@ -1899,14 +1743,13 @@ const OlapCube: React.FC = () => {
           (l.material as THREE.Material).dispose();
         }
       });
-      anim.sceneLabels = [];
-
-      if (opId === "drilldown" && step === 1 && anim.tempMeshes.length === 0) {
+      an.lbls = [];
+      if (opId === "drilldown" && step === 1 && an.tmpM.length === 0) {
         let ti = 0;
-        ctx.meshMap.forEach((m) => {
-          const info = m.userData.cellInfo as CellInfo;
-          if (info.xIndex !== 0) return;
-          const oc = m.userData.originalColor as THREE.Color;
+        s.mm.forEach((m2) => {
+          const i = m2.userData.cellInfo as CellInfo;
+          if (i.xIndex !== 0) return;
+          const oc = m2.userData.originalColor as THREE.Color;
           const tm = new THREE.Mesh(
             new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE),
             new THREE.MeshPhongMaterial({
@@ -1917,85 +1760,87 @@ const OlapCube: React.FC = () => {
               specular: new THREE.Color(0x222222),
             }),
           );
-          tm.position.copy(m.position);
+          tm.position.copy(m2.position);
           tm.scale.setScalar(0.01);
-          const eG2 = new THREE.EdgesGeometry(tm.geometry);
-          const eM2 = new THREE.LineBasicMaterial({
-            color: 0x999999,
-            transparent: true,
-            opacity: 0.35,
-          });
-          tm.add(new THREE.LineSegments(eG2, eM2));
-          ctx.cubeGroup.add(tm);
-          anim.tempMeshes.push(tm);
-          anim.tempMeshMap.set(`temp-${ti++}`, tm);
+          tm.add(
+            new THREE.LineSegments(
+              new THREE.EdgesGeometry(tm.geometry),
+              new THREE.LineBasicMaterial({
+                color: 0x999999,
+                transparent: true,
+                opacity: 0.35,
+              }),
+            ),
+          );
+          s.cubeG.add(tm);
+          an.tmpM.push(tm);
+          an.tmpMap.set(`temp-${ti++}`, tm);
         });
       }
-
-      const endTargets = getStepEndTargets(opId, step);
-      const targets = captureTargets(ctx.meshMap, anim.tempMeshMap, endTargets);
-      const sceneLabels = createStepLabels(opId, step);
-      sceneLabels.forEach((l) => ctx.opGroup.add(l));
-      anim.sceneLabels = sceneLabels;
-      anim.step = step;
-      anim.startTime = performance.now();
+      const ends = getTargets(opId, step);
+      const tgts = capTgts(s.mm, an.tmpMap, ends);
+      const lbls = mkLabels(opId, step);
+      lbls.forEach((l) => s.opG.add(l));
+      an.lbls = lbls;
+      an.step = step;
+      an.start = performance.now();
       const opDef = getOperationById(opId)!;
-      anim.duration = opDef.steps[step].duration;
-      anim.targets = targets;
+      an.dur = opDef.steps[step].duration;
+      an.tgts = tgts;
     },
-    [getStepEndTargets, createStepLabels],
+    [getTargets, mkLabels],
   );
 
-  const startOperation = useCallback(
+  const startOp = useCallback(
     (opId: string) => {
-      const ctx = sceneRef.current;
-      if (!ctx) return;
-      const originals = new Map<string, OrigState>();
-      ctx.meshMap.forEach((m, k) => {
-        const mat = m.material as THREE.MeshPhongMaterial;
-        originals.set(k, {
+      const s = sRef.current;
+      if (!s) return;
+      const orig = new Map<string, OrigS>();
+      s.mm.forEach((m, k) => {
+        const mt = m.material as THREE.MeshPhongMaterial;
+        orig.set(k, {
           pos: m.position.clone(),
           scale: m.scale.x,
-          opacity: mat.opacity,
-          color: mat.color.clone(),
+          op: mt.opacity,
+          col: mt.color.clone(),
         });
       });
-      animRef.current = {
+      anRef.current = {
         opId,
         step: 0,
-        startTime: 0,
-        duration: 0,
-        targets: new Map(),
-        originalStates: originals,
-        tempMeshes: [],
-        tempMeshMap: new Map(),
-        sceneLabels: [],
+        start: 0,
+        dur: 0,
+        tgts: new Map(),
+        orig,
+        tmpM: [],
+        tmpMap: new Map(),
+        lbls: [],
       };
       if (conceptMode) {
         setConceptMode(false);
-        setActiveConcepts(new Set());
+        setActCon(new Set());
       }
-      selectCellByInfo(null);
-      setActiveOp(opId);
-      setCurrentStep(0);
+      selectCell(null);
+      setActOp(opId);
+      setCurStep(0);
       setStepDone(false);
       setupStep(opId, 0);
     },
-    [conceptMode, setupStep, selectCellByInfo],
+    [conceptMode, setupStep, selectCell],
   );
 
-  const resetOperation = useCallback(() => {
-    const ctx = sceneRef.current;
-    const anim = animRef.current;
-    if (!ctx || !anim) return;
-    cancelAnimationFrame(animRafRef.current);
-    anim.tempMeshes.forEach((m) => {
-      ctx.cubeGroup.remove(m);
+  const resetOp = useCallback(() => {
+    const s = sRef.current,
+      an = anRef.current;
+    if (!s || !an) return;
+    cancelAnimationFrame(arRef.current);
+    an.tmpM.forEach((m) => {
+      s.cubeG.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     });
-    anim.sceneLabels.forEach((l) => {
-      ctx.opGroup.remove(l);
+    an.lbls.forEach((l) => {
+      s.opG.remove(l);
       if (l instanceof THREE.Mesh) {
         l.geometry.dispose();
         (l.material as THREE.Material).dispose();
@@ -2009,293 +1854,262 @@ const OlapCube: React.FC = () => {
         (l.material as THREE.Material).dispose();
       }
     });
-    anim.originalStates.forEach((orig, k) => {
-      const mesh = ctx.meshMap.get(k);
-      if (!mesh) return;
-      mesh.position.copy(orig.pos);
-      mesh.scale.setScalar(orig.scale);
-      const mat = mesh.material as THREE.MeshPhongMaterial;
-      mat.opacity = orig.opacity;
-      mat.color.copy(orig.color);
-      mat.emissive.setHex(0);
+    an.orig.forEach((o, k) => {
+      const m = s.mm.get(k);
+      if (!m) return;
+      m.position.copy(o.pos);
+      m.scale.setScalar(o.scale);
+      const mt = m.material as THREE.MeshPhongMaterial;
+      mt.opacity = o.op;
+      mt.color.copy(o.col);
+      mt.emissive.setHex(0);
     });
-    animRef.current = null;
-    setActiveOp(null);
-    setCurrentStep(0);
+    anRef.current = null;
+    setActOp(null);
+    setCurStep(0);
     setStepDone(false);
   }, []);
 
   const goStep = useCallback(
-    (dir: 1 | -1) => {
-      const anim = animRef.current;
-      if (!anim) return;
-      const opDef = getOperationById(anim.opId);
-      if (!opDef) return;
-      const next = anim.step + dir;
-      if (next < 0 || next >= opDef.steps.length) return;
-      setCurrentStep(next);
+    (d: 1 | -1) => {
+      const an = anRef.current;
+      if (!an) return;
+      const op = getOperationById(an.opId);
+      if (!op) return;
+      const n = an.step + d;
+      if (n < 0 || n >= op.steps.length) return;
+      setCurStep(n);
       setStepDone(false);
-      setupStep(anim.opId, next);
+      setupStep(an.opId, n);
     },
     [setupStep],
   );
 
-  /* ================================================================ */
-  /*  Animation loop                                                   */
-  /* ================================================================ */
+  /* ---- animation loop ---- */
   useEffect(() => {
-    const anim = animRef.current;
-    const ctx = sceneRef.current;
-    if (!anim || !ctx || !activeOp) return;
+    const an = anRef.current,
+      s = sRef.current;
+    if (!an || !s || !actOp) return;
     let id = 0;
     let done = false;
     const tick = () => {
-      const p = Math.min(
-        (performance.now() - anim.startTime) / anim.duration,
-        1,
-      );
-      applyProgress(
-        ctx.meshMap,
-        anim.tempMeshMap,
-        anim.targets,
-        easeInOutCubic(p),
-      );
-      if (p < 1) {
-        id = requestAnimationFrame(tick);
-      } else if (!done) {
+      const p = Math.min((performance.now() - an.start) / an.dur, 1);
+      applyProg(s.mm, an.tmpMap, an.tgts, ease(p));
+      if (p < 1) id = requestAnimationFrame(tick);
+      else if (!done) {
         done = true;
         setStepDone(true);
       }
     };
     id = requestAnimationFrame(tick);
-    animRafRef.current = id;
+    arRef.current = id;
     return () => cancelAnimationFrame(id);
-  }, [activeOp, currentStep]);
+  }, [actOp, curStep]);
 
   useEffect(() => {
-    if (!stepDone || !autoPlay || !activeOp) return;
-    const opDef = getOperationById(activeOp);
-    const anim = animRef.current;
-    if (!opDef || !anim || anim.step >= opDef.steps.length - 1) return;
-    const timer = setTimeout(() => goStep(1), 800);
-    return () => clearTimeout(timer);
-  }, [stepDone, autoPlay, activeOp, goStep]);
+    if (!stepDone || !autoPlay || !actOp) return;
+    const op = getOperationById(actOp),
+      an = anRef.current;
+    if (!op || !an || an.step >= op.steps.length - 1) return;
+    const t = setTimeout(() => goStep(1), 800);
+    return () => clearTimeout(t);
+  }, [stepDone, autoPlay, actOp, goStep]);
 
-  /* ================================================================ */
-  /*  Per-frame styling                                                */
-  /* ================================================================ */
+  /* ---- per-frame styling ---- */
   useEffect(() => {
-    const ctx = sceneRef.current;
-    if (!ctx || activeOp) return;
+    const s = sRef.current;
+    if (!s || actOp) return;
     let pid = 0;
     const fl = () => {
       pid = requestAnimationFrame(fl);
-      const sel = ctx.selectedMesh?.userData.cellInfo as CellInfo | undefined;
-      ctx.cubeGroup.children.forEach((c) => {
+      const sel = s.selM?.userData.cellInfo as CellInfo | undefined;
+      s.cubeG.children.forEach((c) => {
         if (!(c instanceof THREE.Mesh) || !c.userData.cellInfo) return;
-        const info = c.userData.cellInfo as CellInfo;
-        const mat = c.material as THREE.MeshPhongMaterial;
+        const i = c.userData.cellInfo as CellInfo;
+        const mt = c.material as THREE.MeshPhongMaterial;
         const oc = c.userData.originalColor as THREE.Color;
-        const isH = c === ctx.hoveredMesh;
-        const isS = c === ctx.selectedMesh;
-        if (anyConcept) {
+        const isH = c === s.hovM,
+          isS = c === s.selM;
+        if (anyCon) {
           const hl =
-            activeConcepts.has("cells") ||
-            activeConcepts.has("facts") ||
-            activeConcepts.has("measures");
+            actCon.has("cells") ||
+            actCon.has("facts") ||
+            actCon.has("measures");
           if (!hl) {
-            mat.emissive.setHex(0);
+            mt.emissive.setHex(0);
             return;
           }
         }
-        if (sel && !anyConcept) {
+        if (sel && !anyCon) {
           const mm =
-            (info.xIndex === sel.xIndex ? 1 : 0) +
-            (info.yIndex === sel.yIndex ? 1 : 0) +
-            (info.zIndex === sel.zIndex ? 1 : 0);
+            (i.xIndex === sel.xIndex ? 1 : 0) +
+            (i.yIndex === sel.yIndex ? 1 : 0) +
+            (i.zIndex === sel.zIndex ? 1 : 0);
           if (isS) {
-            mat.emissive.setHex(0x222222);
-            mat.opacity = 1;
-            mat.color.copy(oc);
+            mt.emissive.setHex(0x222222);
+            mt.opacity = 1;
+            mt.color.copy(oc);
           } else if (isH) {
-            mat.emissive.setHex(0x1a1a1a);
-            mat.opacity = 0.95;
-            mat.color.copy(oc);
+            mt.emissive.setHex(0x1a1a1a);
+            mt.opacity = 0.95;
+            mt.color.copy(oc);
           } else if (mm >= 2) {
-            mat.emissive.setHex(0x0a0a0a);
-            mat.opacity = 0.8;
-            mat.color.copy(oc);
+            mt.emissive.setHex(0x0a0a0a);
+            mt.opacity = 0.8;
+            mt.color.copy(oc);
           } else if (mm === 1) {
-            mat.emissive.setHex(0);
-            mat.opacity = 0.55;
-            mat.color.copy(oc);
+            mt.emissive.setHex(0);
+            mt.opacity = 0.55;
+            mt.color.copy(oc);
           } else {
-            mat.emissive.setHex(0);
-            mat.opacity = 0.18;
-            mat.color.copy(oc);
+            mt.emissive.setHex(0);
+            mt.opacity = 0.18;
+            mt.color.copy(oc);
           }
         } else if (isH) {
-          mat.emissive.setHex(0x1a1a1a);
-          mat.opacity = 1;
-          mat.color.copy(oc);
-        } else if (!anyConcept) {
-          mat.emissive.setHex(0);
-          mat.opacity = 0.88;
-          mat.color.copy(oc);
+          mt.emissive.setHex(0x1a1a1a);
+          mt.opacity = 1;
+          mt.color.copy(oc);
+        } else if (!anyCon) {
+          mt.emissive.setHex(0);
+          mt.opacity = 0.88;
+          mt.color.copy(oc);
         } else {
-          mat.emissive.setHex(0);
+          mt.emissive.setHex(0);
         }
       });
     };
     fl();
     return () => cancelAnimationFrame(pid);
-  }, [activeConcepts, anyConcept, activeOp]);
+  }, [actCon, anyCon, actOp]);
 
-  /* ================================================================ */
-  /*  Interaction handlers                                             */
-  /* ================================================================ */
-  const findCellMesh = useCallback(
-    (hits: THREE.Intersection[]): THREE.Mesh | null => {
-      for (const h of hits) {
-        let o: THREE.Object3D | null = h.object;
-        while (o) {
-          if (o instanceof THREE.Mesh && o.userData.cellInfo) return o;
-          o = o.parent;
-        }
+  /* ---- interaction ---- */
+  const fCM = useCallback((h: THREE.Intersection[]) => {
+    for (const hh of h) {
+      let o: THREE.Object3D | null = hh.object;
+      while (o) {
+        if (o instanceof THREE.Mesh && o.userData.cellInfo) return o;
+        o = o.parent;
       }
-      return null;
-    },
-    [],
-  );
-
-  const onPointerMove = useCallback(
+    }
+    return null;
+  }, []);
+  const onPM = useCallback(
     (e: React.MouseEvent) => {
-      if (activeOp) return;
-      const ctx = sceneRef.current;
-      const el = canvasRef.current;
-      if (!ctx || !el) return;
+      if (actOp) return;
+      const s = sRef.current,
+        el = cvRef.current;
+      if (!s || !el) return;
       const r = el.getBoundingClientRect();
-      ctx.mouse.set(
+      s.ms.set(
         ((e.clientX - r.left) / r.width) * 2 - 1,
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
-      ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
-      const hm = findCellMesh(
-        ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true),
-      );
+      s.rc.setFromCamera(s.ms, s.cam);
+      const hm = fCM(s.rc.intersectObjects(s.cubeG.children, true));
       if (hm) {
-        ctx.hoveredMesh = hm;
+        s.hovM = hm;
         setHoverCell(hm.userData.cellInfo);
         setTipPos({ x: e.clientX, y: e.clientY });
         el.style.cursor = "pointer";
       } else {
-        ctx.hoveredMesh = null;
+        s.hovM = null;
         setHoverCell(null);
         el.style.cursor = "grab";
       }
     },
-    [findCellMesh, activeOp],
+    [fCM, actOp],
   );
-
-  const onPointerDown = useCallback((e: React.MouseEvent) => {
-    mouseDownPos.current = { x: e.clientX, y: e.clientY };
+  const onPD = useCallback((e: React.MouseEvent) => {
+    mdRef.current = { x: e.clientX, y: e.clientY };
   }, []);
-
-  const onPointerUp = useCallback(
+  const onPU = useCallback(
     (e: React.MouseEvent) => {
-      if (activeOp) return;
-      if (mouseDownPos.current) {
+      if (actOp) return;
+      if (mdRef.current) {
         const d =
-          (e.clientX - mouseDownPos.current.x) ** 2 +
-          (e.clientY - mouseDownPos.current.y) ** 2;
+          (e.clientX - mdRef.current.x) ** 2 +
+          (e.clientY - mdRef.current.y) ** 2;
         if (d > 25) return;
       }
-      const ctx = sceneRef.current;
-      const el = canvasRef.current;
-      if (!ctx || !el) return;
+      const s = sRef.current,
+        el = cvRef.current;
+      if (!s || !el) return;
       const r = el.getBoundingClientRect();
-      ctx.mouse.set(
+      s.ms.set(
         ((e.clientX - r.left) / r.width) * 2 - 1,
         -((e.clientY - r.top) / r.height) * 2 + 1,
       );
-      ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
-      const hm = findCellMesh(
-        ctx.raycaster.intersectObjects(ctx.cubeGroup.children, true),
-      );
-      selectCellByInfo(hm ? hm.userData.cellInfo : null);
+      s.rc.setFromCamera(s.ms, s.cam);
+      const hm = fCM(s.rc.intersectObjects(s.cubeG.children, true));
+      selectCell(hm ? hm.userData.cellInfo : null);
     },
-    [findCellMesh, selectCellByInfo, activeOp],
+    [fCM, selectCell, actOp],
   );
-
-  const onPointerLeave = useCallback(() => {
-    const ctx = sceneRef.current;
-    if (ctx) ctx.hoveredMesh = null;
+  const onPL = useCallback(() => {
+    const s = sRef.current;
+    if (s) s.hovM = null;
     setHoverCell(null);
   }, []);
 
-  /* ================================================================ */
-  /*  Misc handlers                                                    */
-  /* ================================================================ */
-  const changeAxis = useCallback(
-    (axis: keyof AxisAssignment, dimId: string) => {
-      if (activeOp) return;
-      setAxes((prev) => {
-        if (prev[axis] === dimId) return prev;
-        const next = { ...prev };
-        const c = (["x", "y", "z"] as const).find(
-          (a) => a !== axis && prev[a] === dimId,
-        );
-        if (c) next[c] = prev[axis];
-        next[axis] = dimId;
-        return next;
+  const chAx = useCallback(
+    (a: keyof AxisAssignment, v: string) => {
+      if (actOp) return;
+      setAxes((p) => {
+        if (p[a] === v) return p;
+        const n = { ...p };
+        const c = (["x", "y", "z"] as const).find((x) => x !== a && p[x] === v);
+        if (c) n[c] = p[a];
+        n[a] = v;
+        return n;
       });
     },
-    [activeOp],
+    [actOp],
   );
-
-  const closeDetail = useCallback(
-    () => selectCellByInfo(null),
-    [selectCellByInfo],
+  const chLvl = useCallback(
+    (dimId: string, lvl: number) => {
+      if (actOp) return;
+      setLevelOverrides((p) => ({ ...p, [dimId]: lvl }));
+    },
+    [actOp],
   );
-
-  const toggleConcept = useCallback((id: ConceptId) => {
-    setActiveConcepts((p) => {
+  const closeDet = useCallback(() => selectCell(null), [selectCell]);
+  const togCon = useCallback((id: ConceptId) => {
+    setActCon((p) => {
       const n = new Set(p);
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
   }, []);
-  const toggleAll = useCallback(() => {
-    setActiveConcepts((p) =>
+  const togAll = useCallback(() => {
+    setActCon((p) =>
       p.size === CONCEPTS.length
         ? new Set()
         : new Set(CONCEPTS.map((c) => c.id)),
     );
   }, []);
-  const clearAll = useCallback(() => {
-    setActiveConcepts(new Set());
-    setExpandedConcept(null);
+  const clrAll = useCallback(() => {
+    setActCon(new Set());
+    setExpCon(null);
   }, []);
 
-  const selKey = selCell ? cellKey(selCell) : null;
-  const getRowClass = useCallback(
-    (cell: CellInfo): string => {
-      const k = cellKey(cell);
+  const selKey = selCell ? ck(selCell) : null;
+  const getRC = useCallback(
+    (cell: CellInfo) => {
+      const k = ck(cell);
       if (selKey === k) return "olap-table-row selected";
       if (!selCell) return "olap-table-row";
-      const m =
+      const mm =
         (cell.xIndex === selCell.xIndex ? 1 : 0) +
         (cell.yIndex === selCell.yIndex ? 1 : 0) +
         (cell.zIndex === selCell.zIndex ? 1 : 0);
-      if (m >= 2) return "olap-table-row related-strong";
-      if (m === 1) return "olap-table-row related-weak";
+      if (mm >= 2) return "olap-table-row related-strong";
+      if (mm === 1) return "olap-table-row related-weak";
       return "olap-table-row dimmed";
     },
     [selCell, selKey],
   );
-
-  const tableStats = useMemo(() => {
+  const tS = useMemo(() => {
     const v = allCells.map((c) => c.value);
     return {
       total: v.reduce((a, b) => a + b, 0),
@@ -2305,8 +2119,7 @@ const OlapCube: React.FC = () => {
       count: v.length,
     };
   }, [allCells]);
-
-  const activeOpDef = activeOp ? getOperationById(activeOp) : null;
+  const aOD = actOp ? getOperationById(actOp) : null;
 
   /* ================================================================ */
   /*  JSX                                                              */
@@ -2319,115 +2132,146 @@ const OlapCube: React.FC = () => {
           <span className="olap-title-icon">◆</span> OLAP Cube Explorer
         </h2>
         <div className="olap-selectors">
-          {(["x", "y", "z"] as const).map((ax) => (
-            <div key={ax} className="olap-sel">
-              <label style={{ color: AXIS_COLORS[ax].css }}>
-                {ax.toUpperCase()} Axis
-              </label>
-              <select
-                value={axes[ax]}
-                onChange={(e) => changeAxis(ax, e.target.value)}
-                style={{ borderColor: AXIS_COLORS[ax].css }}
-                disabled={!!activeOp}
-              >
-                {DIMENSIONS.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {getDimensionDisplayName(d)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+          {(["x", "y", "z"] as const).map((ax) => {
+            const dimId = axes[ax];
+            const baseDim = getDimensionById(dimId)!;
+            const curLvl = effLvl(dimId);
+            return (
+              <div key={ax} className="olap-sel">
+                <label style={{ color: AX[ax].css }}>
+                  {ax.toUpperCase()} Axis
+                </label>
+                <select
+                  value={dimId}
+                  onChange={(e) => chAx(ax, e.target.value)}
+                  style={{ borderColor: AX[ax].css }}
+                  disabled={!!actOp}
+                >
+                  {DIMENSIONS.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+                {baseDim.hierarchy && baseDim.hierarchy.length > 1 && (
+                  <div className="olap-level-pills">
+                    {baseDim.hierarchy.map((lv, li) => {
+                      const isAct = li === curLvl;
+                      return (
+                        <button
+                          key={li}
+                          className={`olap-level-pill ${isAct ? "active" : ""}`}
+                          style={
+                            isAct
+                              ? {
+                                  backgroundColor: AX[ax].css,
+                                  borderColor: AX[ax].css,
+                                  color: "#fff",
+                                }
+                              : undefined
+                          }
+                          onClick={() => chLvl(dimId, li)}
+                          disabled={!!actOp}
+                          title={`${lv.members.length} member${lv.members.length !== 1 ? "s" : ""}`}
+                        >
+                          {lv.levelName}
+                          <span className="olap-level-count">
+                            {lv.members.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div className="olap-legend">
-          <span>Low</span>
-          <div className="olap-legend-bar" />
-          <span>High</span>
+        <div className="olap-header-right">
+          <div className="olap-cell-counter">{tS.count} cells</div>
+          <div className="olap-legend">
+            <span>Low</span>
+            <div className="olap-legend-bar" />
+            <span>High</span>
+          </div>
+          <button
+            className={`olap-learn-btn ${conceptMode ? "active" : ""}`}
+            onClick={() => {
+              if (actOp) return;
+              setConceptMode((p) => !p);
+              if (conceptMode) clrAll();
+            }}
+            disabled={!!actOp}
+          >
+            {conceptMode ? "✕ Close Learn" : "📖 Learn"}
+          </button>
         </div>
-        <button
-          className={`olap-learn-btn ${conceptMode ? "active" : ""}`}
-          onClick={() => {
-            if (activeOp) return;
-            setConceptMode((p) => !p);
-            if (conceptMode) clearAll();
-          }}
-          disabled={!!activeOp}
-        >
-          {conceptMode ? "✕ Close Learn" : "📖 Learn"}
-        </button>
       </div>
 
       {/* Main */}
       <div className="olap-main">
-        {/* Concept sidebar */}
-        {conceptMode && !activeOp && (
+        {conceptMode && !actOp && (
           <div className="olap-concept-sidebar">
             <div className="olap-concept-sidebar-header">
               <h3>OLAP Concepts</h3>
               <div className="olap-concept-sidebar-actions">
-                <button onClick={toggleAll} className="olap-concept-toggle-all">
-                  {activeConcepts.size === CONCEPTS.length
-                    ? "Hide All"
-                    : "Show All"}
+                <button onClick={togAll} className="olap-concept-toggle-all">
+                  {actCon.size === CONCEPTS.length ? "Hide All" : "Show All"}
                 </button>
-                {activeConcepts.size > 0 && (
-                  <button onClick={clearAll} className="olap-concept-clear">
+                {actCon.size > 0 && (
+                  <button onClick={clrAll} className="olap-concept-clear">
                     Clear
                   </button>
                 )}
               </div>
             </div>
             <div className="olap-concept-list">
-              {CONCEPTS.map((concept) => {
-                const isA = activeConcepts.has(concept.id);
-                const isE = expandedConcept === concept.id;
+              {CONCEPTS.map((c) => {
+                const isA = actCon.has(c.id),
+                  isE = expCon === c.id;
                 return (
                   <div
-                    key={concept.id}
+                    key={c.id}
                     className={`olap-concept-card ${isA ? "active" : ""}`}
-                    style={{ borderLeftColor: isA ? concept.color : "#ddd" }}
+                    style={{ borderLeftColor: isA ? c.color : "#ddd" }}
                   >
                     <div className="olap-concept-card-header">
                       <button
                         className="olap-concept-toggle-btn"
                         style={{
-                          backgroundColor: isA ? concept.color : "#eee",
+                          backgroundColor: isA ? c.color : "#eee",
                           color: isA ? "#fff" : "#888",
                         }}
-                        onClick={() => toggleConcept(concept.id)}
+                        onClick={() => togCon(c.id)}
                       >
-                        {concept.icon}
+                        {c.icon}
                       </button>
                       <div
                         className="olap-concept-card-text"
-                        onClick={() =>
-                          setExpandedConcept(isE ? null : concept.id)
-                        }
+                        onClick={() => setExpCon(isE ? null : c.id)}
                       >
                         <span className="olap-concept-card-label">
-                          {concept.label}
+                          {c.label}
                         </span>
                         <span className="olap-concept-card-short">
-                          {concept.shortDesc}
+                          {c.shortDesc}
                         </span>
                       </div>
                       <label className="olap-concept-switch">
                         <input
                           type="checkbox"
                           checked={isA}
-                          onChange={() => toggleConcept(concept.id)}
+                          onChange={() => togCon(c.id)}
                         />
                         <span
                           className="olap-concept-switch-slider"
-                          style={
-                            isA ? { backgroundColor: concept.color } : undefined
-                          }
+                          style={isA ? { backgroundColor: c.color } : undefined}
                         />
                       </label>
                     </div>
                     {isE && (
                       <div className="olap-concept-card-body">
-                        <p>{concept.longDesc}</p>
+                        <p>{c.longDesc}</p>
                       </div>
                     )}
                   </div>
@@ -2437,35 +2281,34 @@ const OlapCube: React.FC = () => {
           </div>
         )}
 
-        {/* Scene column */}
         <div className="olap-scene-col">
           <div
             className="olap-viewport"
-            ref={canvasRef}
-            onMouseMove={onPointerMove}
-            onMouseDown={onPointerDown}
-            onMouseUp={onPointerUp}
-            onMouseLeave={onPointerLeave}
+            ref={cvRef}
+            onMouseMove={onPM}
+            onMouseDown={onPD}
+            onMouseUp={onPU}
+            onMouseLeave={onPL}
           />
 
-          {/* Operations panel */}
+          {/* Ops panel */}
           <div className="olap-ops-panel">
             <div className="olap-ops-header">
               <span className="olap-ops-title">⚙ OLAP Operations</span>
-              {activeOp && (
-                <button className="olap-ops-reset-btn" onClick={resetOperation}>
+              {actOp && (
+                <button className="olap-ops-reset-btn" onClick={resetOp}>
                   ⟲ Reset
                 </button>
               )}
             </div>
-            {!activeOp && (
+            {!actOp && (
               <div className="olap-ops-grid">
                 {OPERATIONS.map((op) => (
                   <button
                     key={op.id}
                     className="olap-ops-card"
                     style={{ borderColor: op.color }}
-                    onClick={() => startOperation(op.id)}
+                    onClick={() => startOp(op.id)}
                   >
                     <span className="olap-ops-card-icon">{op.icon}</span>
                     <span className="olap-ops-card-name">{op.name}</span>
@@ -2474,43 +2317,38 @@ const OlapCube: React.FC = () => {
                 ))}
               </div>
             )}
-            {activeOp && activeOpDef && (
+            {actOp && aOD && (
               <div className="olap-ops-active">
                 <div className="olap-ops-active-title">
-                  <span style={{ color: activeOpDef.color }}>
-                    {activeOpDef.icon} {activeOpDef.name}
+                  <span style={{ color: aOD.color }}>
+                    {aOD.icon} {aOD.name}
                   </span>
                 </div>
                 <div className="olap-ops-steps">
-                  {activeOpDef.steps.map((_, i) => (
+                  {aOD.steps.map((_, i) => (
                     <React.Fragment key={i}>
                       <div
-                        className={`olap-ops-step-dot ${i < currentStep ? "done" : i === currentStep ? "current" : ""}`}
+                        className={`olap-ops-step-dot ${i < curStep ? "done" : i === curStep ? "current" : ""}`}
                         style={
-                          i <= currentStep
+                          i <= curStep
                             ? {
-                                borderColor: activeOpDef.color,
+                                borderColor: aOD.color,
                                 background:
-                                  i < currentStep ||
-                                  (i === currentStep && stepDone)
-                                    ? activeOpDef.color
+                                  i < curStep || (i === curStep && stepDone)
+                                    ? aOD.color
                                     : "#fff",
                               }
                             : {}
                         }
                       >
-                        {i < currentStep || (i === currentStep && stepDone)
+                        {i < curStep || (i === curStep && stepDone)
                           ? "✓"
                           : i + 1}
                       </div>
-                      {i < activeOpDef.steps.length - 1 && (
+                      {i < aOD.steps.length - 1 && (
                         <div
-                          className={`olap-ops-step-line ${i < currentStep ? "done" : ""}`}
-                          style={
-                            i < currentStep
-                              ? { background: activeOpDef.color }
-                              : {}
-                          }
+                          className={`olap-ops-step-line ${i < curStep ? "done" : ""}`}
+                          style={i < curStep ? { background: aOD.color } : {}}
                         />
                       )}
                     </React.Fragment>
@@ -2519,19 +2357,18 @@ const OlapCube: React.FC = () => {
                 <div className="olap-ops-step-info">
                   <div
                     className="olap-ops-step-label"
-                    style={{ color: activeOpDef.color }}
+                    style={{ color: aOD.color }}
                   >
-                    Step {currentStep + 1}:{" "}
-                    {activeOpDef.steps[currentStep].label}
+                    Step {curStep + 1}: {aOD.steps[curStep].label}
                   </div>
                   <p className="olap-ops-step-desc">
-                    {activeOpDef.steps[currentStep].description}
+                    {aOD.steps[curStep].description}
                   </p>
                 </div>
                 <div className="olap-ops-controls">
                   <button
                     className="olap-ops-ctrl-btn"
-                    disabled={currentStep === 0}
+                    disabled={curStep === 0}
                     onClick={() => goStep(-1)}
                   >
                     ◀ Prev
@@ -2546,9 +2383,7 @@ const OlapCube: React.FC = () => {
                   </label>
                   <button
                     className="olap-ops-ctrl-btn"
-                    disabled={
-                      currentStep >= activeOpDef.steps.length - 1 || !stepDone
-                    }
+                    disabled={curStep >= aOD.steps.length - 1 || !stepDone}
                     onClick={() => goStep(1)}
                   >
                     Next ▶
@@ -2558,8 +2393,8 @@ const OlapCube: React.FC = () => {
                   <div
                     className="olap-ops-progress-fill"
                     style={{
-                      width: `${((currentStep + (stepDone ? 1 : 0.5)) / activeOpDef.steps.length) * 100}%`,
-                      background: activeOpDef.color,
+                      width: `${((curStep + (stepDone ? 1 : 0.5)) / aOD.steps.length) * 100}%`,
+                      background: aOD.color,
                     }}
                   />
                 </div>
@@ -2567,44 +2402,40 @@ const OlapCube: React.FC = () => {
             )}
           </div>
 
-          {/* Data table */}
-          <div
-            className={`olap-table-section ${tableCollapsed ? "collapsed" : ""}`}
-          >
+          {/* Table */}
+          <div className={`olap-table-section ${tblCol ? "collapsed" : ""}`}>
             <div className="olap-table-header">
               <div className="olap-table-title">
                 <span className="olap-table-title-icon">▤</span>
                 <h3>Fact Table</h3>
                 <span className="olap-table-count">
-                  {tableStats.count} cells · Σ{" "}
-                  {tableStats.total.toLocaleString()} · μ{" "}
-                  {tableStats.avg.toLocaleString()} · ↓ {tableStats.min} · ↑{" "}
-                  {tableStats.max}
+                  {tS.count} cells · Σ {tS.total.toLocaleString()} · μ{" "}
+                  {tS.avg.toLocaleString()} · ↓ {tS.min} · ↑ {tS.max}
                 </span>
               </div>
               <button
                 className="olap-table-collapse-btn"
-                onClick={() => setTableCollapsed((p) => !p)}
+                onClick={() => setTblCol((p) => !p)}
               >
-                {tableCollapsed ? "▲ Show" : "▼ Hide"}
+                {tblCol ? "▲ Show" : "▼ Hide"}
               </button>
             </div>
-            {!tableCollapsed && (
+            {!tblCol && (
               <div className="olap-table-scroll">
                 <table className="olap-table">
                   <thead>
                     <tr>
                       <th className="olap-th-idx">#</th>
-                      <th style={{ color: AXIS_COLORS.x.css }}>
-                        {dimDisplayNames.x}
+                      <th style={{ color: AX.x.css }}>
+                        {dimDisp.x}
                         <span className="olap-th-axis">X</span>
                       </th>
-                      <th style={{ color: AXIS_COLORS.y.css }}>
-                        {dimDisplayNames.y}
+                      <th style={{ color: AX.y.css }}>
+                        {dimDisp.y}
                         <span className="olap-th-axis">Y</span>
                       </th>
-                      <th style={{ color: AXIS_COLORS.z.css }}>
-                        {dimDisplayNames.z}
+                      <th style={{ color: AX.z.css }}>
+                        {dimDisp.z}
                         <span className="olap-th-axis">Z</span>
                       </th>
                       <th className="olap-th-value">Value</th>
@@ -2613,31 +2444,25 @@ const OlapCube: React.FC = () => {
                   </thead>
                   <tbody>
                     {allCells.map((cell, i) => {
-                      const k = cellKey(cell);
-                      const isSel = selKey === k;
-                      const bw =
-                        tableStats.max > tableStats.min
-                          ? ((cell.value - tableStats.min) /
-                              (tableStats.max - tableStats.min)) *
-                            100
-                          : 50;
-                      const col = valueToColor(
-                        cell.value,
-                        tableStats.min,
-                        tableStats.max,
-                      );
+                      const k = ck(cell),
+                        isSel = selKey === k,
+                        bw =
+                          tS.max > tS.min
+                            ? ((cell.value - tS.min) / (tS.max - tS.min)) * 100
+                            : 50;
+                      const col = v2c(cell.value, tS.min, tS.max);
                       const bc = `rgb(${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)})`;
                       return (
                         <tr
                           key={k}
                           ref={(el) => {
-                            if (el) tableRowRefs.current.set(k, el);
-                            else tableRowRefs.current.delete(k);
+                            if (el) trRef.current.set(k, el);
+                            else trRef.current.delete(k);
                           }}
-                          className={getRowClass(cell)}
+                          className={getRC(cell)}
                           onClick={() => {
-                            if (activeOp) return;
-                            selectCellByInfo(isSel ? null : cell);
+                            if (actOp) return;
+                            selectCell(isSel ? null : cell);
                           }}
                         >
                           <td className="olap-td-idx">{i + 1}</td>
@@ -2665,15 +2490,14 @@ const OlapCube: React.FC = () => {
           </div>
 
           <div className="olap-instructions">
-            {activeOp
+            {actOp
               ? "Operation in progress · Rotate the cube to observe"
               : "Drag to rotate · Scroll to zoom · Click a cell or row to inspect"}
           </div>
         </div>
       </div>
 
-      {/* Tooltip */}
-      {hoverCell && !activeOp && (
+      {hoverCell && !actOp && (
         <div
           className="olap-tip"
           style={{ left: tipPos.x + 16, top: tipPos.y - 10 }}
@@ -2693,34 +2517,27 @@ const OlapCube: React.FC = () => {
         </div>
       )}
 
-      {/* Detail panel */}
-      {selCell && !activeOp && (
+      {selCell && !actOp && (
         <div
           className="olap-detail"
           style={conceptMode ? { right: "340px" } : undefined}
         >
           <div className="olap-detail-top">
             <h3>Cell Details</h3>
-            <button onClick={closeDetail}>×</button>
+            <button onClick={closeDet}>×</button>
           </div>
           <table>
             <tbody>
               <tr>
-                <td style={{ color: AXIS_COLORS.x.css }}>
-                  {dimDisplayNames.x}
-                </td>
+                <td style={{ color: AX.x.css }}>{dimDisp.x}</td>
                 <td>{selCell.xMember}</td>
               </tr>
               <tr>
-                <td style={{ color: AXIS_COLORS.y.css }}>
-                  {dimDisplayNames.y}
-                </td>
+                <td style={{ color: AX.y.css }}>{dimDisp.y}</td>
                 <td>{selCell.yMember}</td>
               </tr>
               <tr>
-                <td style={{ color: AXIS_COLORS.z.css }}>
-                  {dimDisplayNames.z}
-                </td>
+                <td style={{ color: AX.z.css }}>{dimDisp.z}</td>
                 <td>{selCell.zMember}</td>
               </tr>
             </tbody>
