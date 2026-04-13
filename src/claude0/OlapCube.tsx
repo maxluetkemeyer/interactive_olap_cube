@@ -14,19 +14,38 @@ const CELL_GAP = 0.4;
 const CELL_STRIDE = CELL_SIZE + CELL_GAP;
 
 const AXIS_COLORS: Record<string, { hex: number; css: string }> = {
-  x: { hex: 0xff6b6b, css: "#ff6b6b" },
-  y: { hex: 0x51cf66, css: "#51cf66" },
-  z: { hex: 0x74c0fc, css: "#74c0fc" },
+  x: { hex: 0xc92a2a, css: "#c92a2a" },
+  y: { hex: 0x2b8a3e, css: "#2b8a3e" },
+  z: { hex: 0x1864ab, css: "#1864ab" },
 };
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Map a 0-1 t value to a nice blue→teal→green→amber→red colour ramp */
 function valueToColor(value: number, min: number, max: number): THREE.Color {
   const t = max > min ? (value - min) / (max - min) : 0.5;
-  const hue = (1 - t) * 0.65;
-  return new THREE.Color().setHSL(hue, 0.75 + t * 0.15, 0.35 + t * 0.2);
+
+  // multi-stop ramp
+  const stops: [number, number, number][] = [
+    [0.25, 0.55, 0.83], // cool blue
+    [0.18, 0.68, 0.68], // teal
+    [0.26, 0.72, 0.45], // green
+    [0.90, 0.72, 0.22], // amber
+    [0.85, 0.28, 0.22], // warm red
+  ];
+
+  const idx = t * (stops.length - 1);
+  const lo = Math.max(0, Math.floor(idx));
+  const hi = Math.min(stops.length - 1, lo + 1);
+  const f = idx - lo;
+
+  return new THREE.Color(
+    stops[lo][0] + (stops[hi][0] - stops[lo][0]) * f,
+    stops[lo][1] + (stops[hi][1] - stops[lo][1]) * f,
+    stops[lo][2] + (stops[hi][2] - stops[lo][2]) * f
+  );
 }
 
 function makeTextSprite(
@@ -38,7 +57,7 @@ function makeTextSprite(
     scale?: number;
   } = {}
 ): THREE.Sprite {
-  const { color = "#fff", size = 40, bold = false, scale = 1 } = opts;
+  const { color = "#333", size = 40, bold = false, scale = 1 } = opts;
   const canvas = document.createElement("canvas");
   const c = canvas.getContext("2d")!;
   const font = `${bold ? "bold " : ""}${size}px "Segoe UI",Arial,sans-serif`;
@@ -56,6 +75,7 @@ function makeTextSprite(
   c.fillText(text, canvas.width / 2, canvas.height / 2);
 
   const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
   const mat = new THREE.SpriteMaterial({
     map: tex,
     transparent: true,
@@ -68,6 +88,32 @@ function makeTextSprite(
   return sprite;
 }
 
+/**
+ * Create a small canvas texture with the value text, then place it as a plane
+ * on the outside faces of the outermost cells.
+ */
+function makeValueLabel(
+  value: number,
+  faceColor: string
+): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const c = canvas.getContext("2d")!;
+
+  c.clearRect(0, 0, 128, 128);
+
+  c.font = "bold 42px 'Segoe UI', Arial, sans-serif";
+  c.fillStyle = faceColor;
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.fillText(String(value), 64, 64);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  return tex;
+}
+
 function disposeGroup(group: THREE.Group) {
   group.traverse((obj) => {
     if (
@@ -77,10 +123,14 @@ function disposeGroup(group: THREE.Group) {
     ) {
       obj.geometry?.dispose();
       const m = obj.material;
-      if (Array.isArray(m)) m.forEach((x) => x.dispose());
+      if (Array.isArray(m))
+        m.forEach((x) => {
+          if ("map" in x && x.map) x.map.dispose();
+          x.dispose();
+        });
       else if (m) {
-        if ("map" in m && (m as THREE.SpriteMaterial).map)
-          (m as THREE.SpriteMaterial).map!.dispose();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ("map" in m && (m as any).map) (m as any).map.dispose();
         m.dispose();
       }
     } else if (obj instanceof THREE.Sprite) {
@@ -92,7 +142,7 @@ function disposeGroup(group: THREE.Group) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Scene context stored in a ref (never triggers re-render)           */
+/*  Scene context stored in a ref                                      */
 /* ------------------------------------------------------------------ */
 
 interface SceneCtx {
@@ -139,21 +189,19 @@ const OlapCube: React.FC = () => {
     const w = el.clientWidth;
     const h = el.clientHeight;
 
-    // Scene ---------------------------------------------------------
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0d0d1a);
+    scene.background = new THREE.Color(0xffffff);
 
-    // Camera --------------------------------------------------------
     const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
     camera.position.set(10, 8, 10);
 
-    // Renderer ------------------------------------------------------
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
 
-    // Controls ------------------------------------------------------
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -161,24 +209,22 @@ const OlapCube: React.FC = () => {
     controls.minDistance = 5;
     controls.maxDistance = 30;
 
-    // Lights --------------------------------------------------------
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    // Lights – tuned for white background
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
 
-    const dl1 = new THREE.DirectionalLight(0xffffff, 0.9);
+    const dl1 = new THREE.DirectionalLight(0xffffff, 0.6);
     dl1.position.set(8, 12, 8);
     scene.add(dl1);
 
-    const dl2 = new THREE.DirectionalLight(0x8888ff, 0.25);
+    const dl2 = new THREE.DirectionalLight(0xccccff, 0.2);
     dl2.position.set(-6, 4, -6);
     scene.add(dl2);
 
-    // Groups --------------------------------------------------------
     const cubeGroup = new THREE.Group();
     const labelGroup = new THREE.Group();
     const axisGroup = new THREE.Group();
     scene.add(cubeGroup, labelGroup, axisGroup);
 
-    // Context -------------------------------------------------------
     const ctx: SceneCtx = {
       scene,
       camera,
@@ -196,23 +242,22 @@ const OlapCube: React.FC = () => {
     };
     sceneRef.current = ctx;
 
-    // Animation loop ------------------------------------------------
     const animate = () => {
       ctx.animId = requestAnimationFrame(animate);
       controls.update();
 
-      // — entrance animation (staggered scale-in)
+      // entrance animation
       const elapsed = performance.now() - ctx.buildTime;
       let idx = 0;
       cubeGroup.children.forEach((c) => {
         if (c instanceof THREE.Mesh && c.userData.cellInfo) {
           const t = Math.min(1, Math.max(0, (elapsed - idx * 25) / 400));
-          c.scale.setScalar(1 - Math.pow(1 - t, 3)); // ease-out cubic
+          c.scale.setScalar(1 - Math.pow(1 - t, 3));
           idx++;
         }
       });
 
-      // — per-frame appearance (selection / hover / slice)
+      // per-frame hover / selection styling
       const sel = ctx.selectedMesh?.userData.cellInfo as
         | CellInfo
         | undefined;
@@ -231,27 +276,27 @@ const OlapCube: React.FC = () => {
           const matches = mx + my + mz;
 
           if (isSel) {
-            mat.emissive.setHex(0x555555);
+            mat.emissive.setHex(0x222222);
             mat.opacity = 1;
           } else if (isHov) {
-            mat.emissive.setHex(0x333333);
-            mat.opacity = 0.92;
-          } else if (matches >= 2) {
             mat.emissive.setHex(0x1a1a1a);
-            mat.opacity = 0.75;
-          } else if (matches === 1) {
+            mat.opacity = 0.95;
+          } else if (matches >= 2) {
             mat.emissive.setHex(0x0a0a0a);
-            mat.opacity = 0.5;
+            mat.opacity = 0.8;
+          } else if (matches === 1) {
+            mat.emissive.setHex(0x000000);
+            mat.opacity = 0.55;
           } else {
             mat.emissive.setHex(0x000000);
-            mat.opacity = 0.15;
+            mat.opacity = 0.18;
           }
         } else if (isHov) {
-          mat.emissive.setHex(0x333333);
-          mat.opacity = 0.95;
+          mat.emissive.setHex(0x1a1a1a);
+          mat.opacity = 1;
         } else {
           mat.emissive.setHex(0x000000);
-          mat.opacity = 0.8;
+          mat.opacity = 0.88;
         }
       });
 
@@ -259,7 +304,6 @@ const OlapCube: React.FC = () => {
     };
     animate();
 
-    // Resize observer -----------------------------------------------
     const ro = new ResizeObserver(() => {
       const ww = el.clientWidth;
       const hh = el.clientHeight;
@@ -270,7 +314,6 @@ const OlapCube: React.FC = () => {
     });
     ro.observe(el);
 
-    // Cleanup -------------------------------------------------------
     return () => {
       cancelAnimationFrame(ctx.animId);
       ro.disconnect();
@@ -286,7 +329,8 @@ const OlapCube: React.FC = () => {
         }
       });
       renderer.dispose();
-      if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+      if (el.contains(renderer.domElement))
+        el.removeChild(renderer.domElement);
     };
   }, []);
 
@@ -297,7 +341,6 @@ const OlapCube: React.FC = () => {
     const ctx = sceneRef.current;
     if (!ctx) return;
 
-    // Clear previous geometry
     disposeGroup(ctx.cubeGroup);
     disposeGroup(ctx.labelGroup);
     disposeGroup(ctx.axisGroup);
@@ -314,7 +357,7 @@ const OlapCube: React.FC = () => {
     const yOff = (-(yN - 1) * CELL_STRIDE) / 2;
     const zOff = (-(zN - 1) * CELL_STRIDE) / 2;
 
-    // --- generate cell data ----------------------------------------
+    // generate all cells
     const cells: CellInfo[] = [];
     for (let xi = 0; xi < xN; xi++)
       for (let yi = 0; yi < yN; yi++)
@@ -341,24 +384,28 @@ const OlapCube: React.FC = () => {
     const mn = Math.min(...vals);
     const mx = Math.max(...vals);
 
-    // --- shared geometries -----------------------------------------
     const boxG = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
     const edgeG = new THREE.EdgesGeometry(boxG);
     const edgeMat = new THREE.LineBasicMaterial({
-      color: 0xffffff,
+      color: 0x999999,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.35,
     });
 
-    // --- create cell meshes ----------------------------------------
+    const valuePlaneG = new THREE.PlaneGeometry(
+      CELL_SIZE * 0.85,
+      CELL_SIZE * 0.85
+    );
+
     cells.forEach((cell) => {
       const col = valueToColor(cell.value, mn, mx);
       const mat = new THREE.MeshPhongMaterial({
         color: col,
         transparent: true,
-        opacity: 0.8,
-        shininess: 80,
-        specular: new THREE.Color(0x333333),
+        opacity: 0.88,
+        shininess: 40,
+        specular: new THREE.Color(0x222222),
+        side: THREE.DoubleSide,
       });
 
       const mesh = new THREE.Mesh(boxG, mat);
@@ -368,9 +415,103 @@ const OlapCube: React.FC = () => {
         cell.zIndex * CELL_STRIDE + zOff
       );
       mesh.userData = { cellInfo: cell };
-      mesh.scale.setScalar(0); // animate in
-
+      mesh.scale.setScalar(0);
       mesh.add(new THREE.LineSegments(edgeG, edgeMat));
+
+      // ------- value labels on outer faces -------
+      // Determine a readable text colour: dark text on light cells, white on dark
+      const luminance = col.r * 0.299 + col.g * 0.587 + col.b * 0.114;
+      const textColor = luminance > 0.52 ? "#1a1a1a" : "#ffffff";
+
+      // +X face (right side of cube, xi === xN-1)
+      if (cell.xIndex === xN - 1) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(CELL_SIZE / 2 + 0.005, 0, 0);
+        plane.rotation.y = Math.PI / 2;
+        mesh.add(plane);
+      }
+
+      // +Z face (front, zi === zN-1)
+      if (cell.zIndex === zN - 1) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(0, 0, CELL_SIZE / 2 + 0.005);
+        mesh.add(plane);
+      }
+
+      // +Y face (top, yi === yN-1)
+      if (cell.yIndex === yN - 1) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(0, CELL_SIZE / 2 + 0.005, 0);
+        plane.rotation.x = -Math.PI / 2;
+        mesh.add(plane);
+      }
+
+      // -X face (left, xi === 0)
+      if (cell.xIndex === 0) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(-CELL_SIZE / 2 - 0.005, 0, 0);
+        plane.rotation.y = -Math.PI / 2;
+        mesh.add(plane);
+      }
+
+      // -Z face (back, zi === 0)
+      if (cell.zIndex === 0) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(0, 0, -CELL_SIZE / 2 - 0.005);
+        plane.rotation.y = Math.PI;
+        mesh.add(plane);
+      }
+
+      // -Y face (bottom, yi === 0)
+      if (cell.yIndex === 0) {
+        const tex = makeValueLabel(cell.value, textColor);
+        const planeMat = new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          depthTest: true,
+          side: THREE.DoubleSide,
+        });
+        const plane = new THREE.Mesh(valuePlaneG, planeMat);
+        plane.position.set(0, -CELL_SIZE / 2 - 0.005, 0);
+        plane.rotation.x = Math.PI / 2;
+        mesh.add(plane);
+      }
+
       ctx.cubeGroup.add(mesh);
     });
 
@@ -477,40 +618,27 @@ const OlapCube: React.FC = () => {
       const m = new THREE.LineBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.45,
+        opacity: 0.55,
       });
       ctx.axisGroup.add(new THREE.Line(g, m));
     };
 
     addLine(
       base.clone(),
-      new THREE.Vector3(
-        -base.x + CELL_STRIDE * 0.3,
-        base.y,
-        base.z
-      ),
+      new THREE.Vector3(-base.x + CELL_STRIDE * 0.3, base.y, base.z),
       AXIS_COLORS.x.hex
     );
     addLine(
       base.clone(),
-      new THREE.Vector3(
-        base.x,
-        -base.y + CELL_STRIDE * 0.3,
-        base.z
-      ),
+      new THREE.Vector3(base.x, -base.y + CELL_STRIDE * 0.3, base.z),
       AXIS_COLORS.y.hex
     );
     addLine(
       base.clone(),
-      new THREE.Vector3(
-        base.x,
-        base.y,
-        -base.z + CELL_STRIDE * 0.3
-      ),
+      new THREE.Vector3(base.x, base.y, -base.z + CELL_STRIDE * 0.3),
       AXIS_COLORS.z.hex
     );
 
-    // --- reset interaction state -----------------------------------
     ctx.buildTime = performance.now();
     ctx.hoveredMesh = null;
     ctx.selectedMesh = null;
@@ -535,16 +663,26 @@ const OlapCube: React.FC = () => {
     ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
     const hits = ctx.raycaster.intersectObjects(
       ctx.cubeGroup.children,
-      false
+      true
     );
 
-    if (
-      hits.length > 0 &&
-      hits[0].object instanceof THREE.Mesh &&
-      hits[0].object.userData.cellInfo
-    ) {
-      ctx.hoveredMesh = hits[0].object as THREE.Mesh;
-      setHoverCell(ctx.hoveredMesh.userData.cellInfo);
+    // find the first hit that has cellInfo (walk up parents)
+    let hitMesh: THREE.Mesh | null = null;
+    for (const hit of hits) {
+      let obj: THREE.Object3D | null = hit.object;
+      while (obj) {
+        if (obj instanceof THREE.Mesh && obj.userData.cellInfo) {
+          hitMesh = obj;
+          break;
+        }
+        obj = obj.parent;
+      }
+      if (hitMesh) break;
+    }
+
+    if (hitMesh) {
+      ctx.hoveredMesh = hitMesh;
+      setHoverCell(hitMesh.userData.cellInfo);
       setTipPos({ x: e.clientX, y: e.clientY });
       el.style.cursor = "pointer";
     } else {
@@ -559,18 +697,17 @@ const OlapCube: React.FC = () => {
   }, []);
 
   const onPointerUp = useCallback((e: React.MouseEvent) => {
-    // Distinguish click from drag
     if (mouseDownPos.current) {
       const dx = e.clientX - mouseDownPos.current.x;
       const dy = e.clientY - mouseDownPos.current.y;
-      if (dx * dx + dy * dy > 25) return; // was a drag
+      if (dx * dx + dy * dy > 25) return;
     }
 
     const ctx = sceneRef.current;
     const el = canvasRef.current;
     if (!ctx || !el) return;
 
-    // Remove old selection outline
+    // remove old outline
     if (ctx.selectedMesh) {
       const old = ctx.selectedMesh.getObjectByName("sel-outline");
       if (old) {
@@ -588,18 +725,25 @@ const OlapCube: React.FC = () => {
     ctx.raycaster.setFromCamera(ctx.mouse, ctx.camera);
     const hits = ctx.raycaster.intersectObjects(
       ctx.cubeGroup.children,
-      false
+      true
     );
 
-    if (
-      hits.length > 0 &&
-      hits[0].object instanceof THREE.Mesh &&
-      hits[0].object.userData.cellInfo
-    ) {
-      const mesh = hits[0].object as THREE.Mesh;
-      ctx.selectedMesh = mesh;
+    let hitMesh: THREE.Mesh | null = null;
+    for (const hit of hits) {
+      let obj: THREE.Object3D | null = hit.object;
+      while (obj) {
+        if (obj instanceof THREE.Mesh && obj.userData.cellInfo) {
+          hitMesh = obj;
+          break;
+        }
+        obj = obj.parent;
+      }
+      if (hitMesh) break;
+    }
 
-      // White selection outline
+    if (hitMesh) {
+      ctx.selectedMesh = hitMesh;
+
       const oG = new THREE.EdgesGeometry(
         new THREE.BoxGeometry(
           CELL_SIZE * 1.12,
@@ -607,12 +751,15 @@ const OlapCube: React.FC = () => {
           CELL_SIZE * 1.12
         )
       );
-      const oM = new THREE.LineBasicMaterial({ color: 0xffffff });
+      const oM = new THREE.LineBasicMaterial({
+        color: 0x222222,
+        linewidth: 2,
+      });
       const outline = new THREE.LineSegments(oG, oM);
       outline.name = "sel-outline";
-      mesh.add(outline);
+      hitMesh.add(outline);
 
-      setSelCell(mesh.userData.cellInfo);
+      setSelCell(hitMesh.userData.cellInfo);
     } else {
       ctx.selectedMesh = null;
       setSelCell(null);
@@ -631,12 +778,12 @@ const OlapCube: React.FC = () => {
   const changeAxis = useCallback(
     (axis: keyof AxisAssignment, dimId: string) => {
       setAxes((prev) => {
-        if (prev[axis] === dimId) return prev; // no-op
+        if (prev[axis] === dimId) return prev;
         const next = { ...prev };
         const conflict = (["x", "y", "z"] as const).find(
           (a) => a !== axis && prev[a] === dimId
         );
-        if (conflict) next[conflict] = prev[axis]; // swap
+        if (conflict) next[conflict] = prev[axis];
         next[axis] = dimId;
         return next;
       });
@@ -666,7 +813,7 @@ const OlapCube: React.FC = () => {
   /* ---------------------------------------------------------------- */
   return (
     <div className="olap-root">
-      {/* ---- header bar ---- */}
+      {/* header */}
       <div className="olap-header">
         <h2 className="olap-title">
           <span className="olap-title-icon">◆</span> OLAP Cube Explorer
@@ -700,7 +847,7 @@ const OlapCube: React.FC = () => {
         </div>
       </div>
 
-      {/* ---- 3-D viewport ---- */}
+      {/* viewport */}
       <div
         className="olap-viewport"
         ref={canvasRef}
@@ -710,7 +857,7 @@ const OlapCube: React.FC = () => {
         onMouseLeave={onPointerLeave}
       />
 
-      {/* ---- hover tooltip ---- */}
+      {/* hover tooltip */}
       {hoverCell && (
         <div
           className="olap-tip"
@@ -731,7 +878,7 @@ const OlapCube: React.FC = () => {
         </div>
       )}
 
-      {/* ---- selected-cell detail panel ---- */}
+      {/* detail panel */}
       {selCell && (
         <div className="olap-detail">
           <div className="olap-detail-top">
@@ -774,7 +921,7 @@ const OlapCube: React.FC = () => {
         </div>
       )}
 
-      {/* ---- instructions ---- */}
+      {/* instructions */}
       <div className="olap-instructions">
         Drag to rotate · Scroll to zoom · Click a cell to inspect
       </div>
