@@ -6,12 +6,16 @@
 //   </main>
 // }
 
-export { default as OlapCube } from "@/claude0/OlapCube";
-export type { Dimension, CellInfo, AxisAssignment } from "@/claude0/types";
-export { DIMENSIONS } from "@/claude0/data";
+export { default as OlapCube } from "@/claude1_concepts/OlapCube";
+export type {
+  Dimension,
+  CellInfo,
+  AxisAssignment,
+} from "@/claude1_concepts/types";
+export { DIMENSIONS } from "@/claude1_concepts/data";
 
 // App.tsx
-import { default as OlapCube } from "@/claude0/OlapCube";
+import { default as OlapCube } from "@/claude1_concepts/OlapCube";
 
 function App() {
   return (

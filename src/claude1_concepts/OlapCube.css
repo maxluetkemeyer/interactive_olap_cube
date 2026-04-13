@@ -1,0 +1,498 @@
+/* ================================================================== */
+/*  Root                                                               */
+/* ================================================================== */
+.olap-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #222;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ================================================================== */
+/*  Header                                                             */
+/* ================================================================== */
+.olap-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 18px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+  flex-wrap: wrap;
+  z-index: 10;
+}
+
+.olap-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #1a1a1a;
+}
+
+.olap-title-icon {
+  background: linear-gradient(135deg, #c92a2a, #2b8a3e, #1864ab);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-right: 6px;
+}
+
+/* ---- selectors ---- */
+.olap-selectors {
+  display: flex;
+  gap: 14px;
+}
+
+.olap-sel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.olap-sel label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  font-weight: 700;
+}
+
+.olap-sel select {
+  background: #fff;
+  color: #222;
+  border: 1.5px solid;
+  border-radius: 6px;
+  padding: 5px 24px 5px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  outline: none;
+  transition: box-shadow 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23555'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.olap-sel select:focus {
+  box-shadow: 0 0 0 2px rgba(24, 100, 171, 0.3);
+}
+
+/* ---- legend ---- */
+.olap-legend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.7rem;
+  color: #888;
+}
+
+.olap-legend-bar {
+  width: 100px;
+  height: 10px;
+  border-radius: 5px;
+  border: 1px solid #ddd;
+  background: linear-gradient(
+    90deg,
+    rgb(64, 140, 212),
+    rgb(46, 174, 174),
+    rgb(66, 184, 115),
+    rgb(230, 184, 56),
+    rgb(217, 72, 56)
+  );
+}
+
+/* ---- learn button ---- */
+.olap-learn-btn {
+  margin-left: auto;
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1.5px solid #7c3aed;
+  background: #fff;
+  color: #7c3aed;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.olap-learn-btn:hover {
+  background: #f5f3ff;
+}
+
+.olap-learn-btn.active {
+  background: #7c3aed;
+  color: #fff;
+}
+
+/* ================================================================== */
+/*  Viewport                                                           */
+/* ================================================================== */
+.olap-viewport-wrapper {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.olap-viewport {
+  flex: 1;
+  min-height: 0;
+  cursor: grab;
+}
+
+.olap-viewport:active {
+  cursor: grabbing;
+}
+
+/* ================================================================== */
+/*  Concept Sidebar                                                    */
+/* ================================================================== */
+.olap-concept-sidebar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 320px;
+  background: rgba(255, 255, 255, 0.97);
+  border-left: 1px solid #e0e0e0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(12px);
+  animation: olap-sidebar-in 0.25s ease-out;
+  overflow: hidden;
+}
+
+@keyframes olap-sidebar-in {
+  from {
+    transform: translateX(320px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.olap-concept-sidebar-header {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.olap-concept-sidebar-header h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: #1a1a1a;
+}
+
+.olap-concept-sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.olap-concept-toggle-all,
+.olap-concept-clear {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  background: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #555;
+  transition: all 0.15s;
+}
+
+.olap-concept-toggle-all:hover,
+.olap-concept-clear:hover {
+  background: #f0f0f0;
+}
+
+.olap-concept-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+/* ---- concept card ---- */
+.olap-concept-card {
+  border-left: 3px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+  margin-bottom: 6px;
+  transition: all 0.2s;
+}
+
+.olap-concept-card.active {
+  background: #f8f5ff;
+  box-shadow: 0 1px 6px rgba(124, 58, 237, 0.1);
+}
+
+.olap-concept-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.olap-concept-toggle-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.olap-concept-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.olap-concept-card-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.olap-concept-card-short {
+  font-size: 0.68rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- toggle switch ---- */
+.olap-concept-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.olap-concept-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.olap-concept-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #ccc;
+  border-radius: 20px;
+  transition: 0.25s;
+}
+
+.olap-concept-switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.25s;
+}
+
+.olap-concept-switch input:checked + .olap-concept-switch-slider::before {
+  transform: translateX(16px);
+}
+
+/* ---- card body (expanded description) ---- */
+.olap-concept-card-body {
+  padding: 0 12px 12px 54px;
+  animation: olap-card-expand 0.2s ease-out;
+}
+
+@keyframes olap-card-expand {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 200px;
+  }
+}
+
+.olap-concept-card-body p {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: #555;
+}
+
+/* ================================================================== */
+/*  Tooltip                                                            */
+/* ================================================================== */
+.olap-tip {
+  position: fixed;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d0d0d0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  z-index: 1000;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  max-width: 260px;
+  color: #222;
+}
+
+.olap-tip p {
+  margin: 2px 0;
+}
+
+.olap-tip b {
+  color: #666;
+  margin-right: 2px;
+}
+
+.olap-tip-val {
+  margin-top: 6px !important;
+  padding-top: 6px;
+  border-top: 1px solid #e8e8e8;
+  color: #c92a2a;
+  font-size: 0.85rem;
+}
+
+/* ================================================================== */
+/*  Detail panel                                                       */
+/* ================================================================== */
+.olap-detail {
+  position: absolute;
+  right: 16px;
+  top: 72px;
+  width: 256px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d0d0d0;
+  border-radius: 14px;
+  padding: 18px;
+  z-index: 50;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  animation: olap-slide-in 0.22s ease-out;
+  color: #222;
+}
+
+@keyframes olap-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.olap-detail-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.olap-detail-top h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.olap-detail-top button {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.olap-detail-top button:hover {
+  color: #333;
+}
+
+.olap-detail table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.olap-detail td {
+  padding: 5px 4px;
+  font-size: 0.82rem;
+}
+
+.olap-detail td:first-child {
+  font-weight: 600;
+  width: 44%;
+}
+
+.olap-detail-val {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e8e8e8;
+}
+
+.olap-detail-val > span:first-child {
+  font-size: 0.74rem;
+  color: #888;
+}
+
+.olap-detail-num {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #c92a2a;
+  font-variant-numeric: tabular-nums;
+}
+
+.olap-detail-pos {
+  margin-top: 10px;
+  font-size: 0.68rem;
+  color: #aaa;
+  font-family: "Courier New", monospace;
+}
+
+/* ================================================================== */
+/*  Instructions                                                       */
+/* ================================================================== */
+.olap-instructions {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  color: rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  white-space: nowrap;
+}
