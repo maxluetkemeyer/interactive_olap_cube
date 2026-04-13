@@ -18,4 +18,5 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  base: "/interactive_olap_cube/",
 });
