@@ -1,0 +1,12 @@
+{
+  "files.associations": {
+    "*.css": "tailwindcss"
+  },
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "javascript.preferences.importModuleSpecifier": "non-relative",
+  "eslint.enable": true,
+  "eslint.run": "onSave",
+  "editor.insertSpaces": true,
+  "editor.tabSize": 2,
+  "editor.defaultFormatter": "esbenp.prettier-vscode"
+}

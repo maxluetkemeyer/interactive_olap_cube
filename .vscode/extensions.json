@@ -1,0 +1,16 @@
+{
+  "recommendations": [
+    "igorsbitnev.error-gutters",
+    "usernamehw.errorlens",
+    "dsznajder.es7-react-js-snippets",
+    "dbaeumer.vscode-eslint",
+    "ecmel.vscode-html-css",
+    "pkief.material-icon-theme",
+    "esbenp.prettier-vscode",
+    "yoavbls.pretty-ts-errors",
+    "prisma.prisma",
+    "bradlc.vscode-tailwindcss",
+    "vitest.explorer",
+    "wayou.vscode-todo-highlight"
+  ]
+}
